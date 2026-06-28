@@ -1,0 +1,407 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id           String       @id @default(cuid())
+  name         String
+  logo         String?
+  phone        String?
+  address      String?
+  website      String?
+  primaryColor String?      // hex e.g. "#1B4F72"
+  tagline      String?
+  taxId        String?      // ע.מ / ח.פ — מוצג בקבלות
+  createdAt    DateTime     @default(now())
+  users        User[]
+  projects     Project[]
+  contractors  Contractor[]
+  receipts     Receipt[]
+}
+
+enum Role {
+  OWNER
+  PROJECT_MANAGER
+  ENGINEER
+  SUPERVISOR
+  CONTRACTOR
+  CLIENT
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  name           String
+  phone          String?
+  role           Role         @default(ENGINEER)
+  // תחום מומחיות — ליקויים מקטגוריה זו ישוייכו אוטומטית למשתמש
+  specialty      DefectCategory?
+  passwordHash   String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  createdJournals  DailyJournal[] @relation("JournalCreator")
+  createdTasks     Task[]         @relation("TaskCreator")
+  assignedTasks    Task[]         @relation("TaskAssignee")
+  createdDefects   Defect[]       @relation("DefectCreator")
+  assignedDefects  Defect[]       @relation("DefectAssignee")
+  uploadedPhotos   Photo[]
+  uploadedDocuments Document[]
+  comments         Comment[]
+  notifications    Notification[]
+  generatedReports Report[]
+  generatedReceipts Receipt[]
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+model Project {
+  id             String        @id @default(cuid())
+  name           String
+  address        String
+  description    String?
+  developerName  String?
+  mainContractor String?
+  managerId      String?
+  startDate      DateTime?
+  targetDate     DateTime?
+  status         ProjectStatus @default(ACTIVE)
+  contractAmount Float?        // סכום חוזה כולל — בסיס לחישוב אחוזי לוח התשלומים
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  journals          DailyJournal[]
+  tasks             Task[]
+  defects           Defect[]
+  documents         Document[]
+  photos            Photo[]
+  reports           Report[]
+  contractors       Contractor[]       @relation("ProjectContractors")
+  paymentMilestones PaymentMilestone[]
+  receipts          Receipt[]
+
+  @@index([organizationId])
+}
+
+enum PaymentStatus {
+  PENDING
+  INVOICED
+  PAID
+}
+
+model PaymentMilestone {
+  id         String        @id @default(cuid())
+  projectId  String
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title      String
+  percentage Float
+  dueDate    DateTime?
+  status     PaymentStatus @default(PENDING)
+  paidDate   DateTime?
+  notes      String?
+  externalReceiptNumber String? // מספר קבלה שהופקה בתוכנת הנהלת חשבונות חיצונית
+  order      Int           @default(0)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  receipts   Receipt[]
+
+  @@index([projectId])
+}
+
+model Receipt {
+  id               String           @id @default(cuid())
+  organizationId   String
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId        String
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestoneId      String?
+  milestone        PaymentMilestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  number           Int
+  amount           Float
+  clientName       String?
+  issueDate        DateTime         @default(now())
+  pdfUrl           String?
+  generatedBy      String
+  generatedByUser  User             @relation(fields: [generatedBy], references: [id])
+  createdAt        DateTime         @default(now())
+
+  @@index([projectId])
+  @@index([organizationId])
+}
+
+model DailyJournal {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  date         DateTime
+  weather      String?
+  workforce    Int?
+  contractors  String[]
+  workDone     String
+  equipment    String?
+  issues       String?
+  signedBy     String?
+  signatureUrl String?
+  createdById  String
+  createdBy    User     @relation("JournalCreator", fields: [createdById], references: [id])
+  createdAt    DateTime @default(now())
+  photos       Photo[]
+
+  @@index([projectId])
+  @@index([date])
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  PENDING_APPROVAL
+  DONE
+  CANCELLED
+}
+
+model Task {
+  id           String     @id @default(cuid())
+  projectId    String
+  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  assignedToId String?
+  assignedTo   User?      @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  contractorId String?
+  contractor   Contractor? @relation(fields: [contractorId], references: [id])
+  dueDate      DateTime?
+  priority     Priority   @default(MEDIUM)
+  status       TaskStatus @default(OPEN)
+  createdById  String
+  createdBy    User       @relation("TaskCreator", fields: [createdById], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  photos       Photo[]
+  comments     Comment[]
+
+  @@index([projectId])
+  @@index([status])
+}
+
+enum DefectCategory {
+  STRUCTURE
+  CONCRETE
+  IRON
+  WATERPROOFING
+  PLUMBING
+  ELECTRICAL
+  HVAC
+  DRYWALL
+  FLOORING
+  CLADDING
+  PAINT
+  ALUMINUM
+  CARPENTRY
+  METALWORK
+  SAFETY
+  LANDSCAPING
+  OTHER
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum DefectStatus {
+  OPEN
+  IN_PROGRESS
+  FIXED
+  VERIFIED
+  CLOSED
+}
+
+model Defect {
+  id           String         @id @default(cuid())
+  projectId    String
+  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title        String
+  location     String?
+  category     DefectCategory @default(OTHER)
+  description  String
+  severity     Severity       @default(MEDIUM)
+  assignedToId String?
+  assignedTo   User?          @relation("DefectAssignee", fields: [assignedToId], references: [id])
+  contractorId String?
+  contractor   Contractor?    @relation(fields: [contractorId], references: [id])
+  dueDate      DateTime?
+  status       DefectStatus   @default(OPEN)
+  createdById  String
+  createdBy    User           @relation("DefectCreator", fields: [createdById], references: [id])
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  beforePhotos Photo[]   @relation("BeforePhotos")
+  afterPhotos  Photo[]   @relation("AfterPhotos")
+  comments     Comment[]
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model Photo {
+  id           String   @id @default(cuid())
+  url          String
+  thumbnailUrl String?
+  caption      String?
+  annotations  Json?
+  projectId    String?
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  journalId    String?
+  journal      DailyJournal? @relation(fields: [journalId], references: [id], onDelete: SetNull)
+  taskId       String?
+  task         Task?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  defectBeforeId String?
+  defectBefore   Defect?   @relation("BeforePhotos", fields: [defectBeforeId], references: [id], onDelete: SetNull)
+  defectAfterId  String?
+  defectAfter    Defect?   @relation("AfterPhotos", fields: [defectAfterId], references: [id], onDelete: SetNull)
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  takenAt      DateTime @default(now())
+
+  @@index([projectId])
+  @@index([journalId])
+  @@index([taskId])
+}
+
+enum DocumentType {
+  PLAN
+  SPEC
+  APPROVAL
+  INVOICE
+  PROTOCOL
+  REPORT
+  OTHER
+}
+
+enum PlanDiscipline {
+  ARCHITECTURE
+  STRUCTURE
+  ELECTRICAL
+  PLUMBING
+  HVAC
+  FIRE_PROTECTION
+  MECHANICAL
+  INTERIOR
+  INFRASTRUCTURE
+  LANDSCAPING
+  OTHER
+}
+
+model Document {
+  id           String          @id @default(cuid())
+  projectId    String
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name         String
+  type         DocumentType    @default(OTHER)
+  discipline   PlanDiscipline? // רלוונטי רק כשtype=PLAN
+  url          String
+  version      Int             @default(1)
+  uploadedById String
+  uploadedBy   User            @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime        @default(now())
+
+  @@index([projectId])
+}
+
+model Contractor {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  trade          String
+  contactName    String?
+  phone          String?
+  email          String?
+  notes          String?
+  createdAt      DateTime     @default(now())
+  tasks          Task[]
+  defects        Defect[]
+  projects       Project[]    @relation("ProjectContractors")
+
+  @@index([organizationId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  defectId  String?
+  defect    Defect?  @relation(fields: [defectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([defectId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([read])
+}
+
+enum ReportType {
+  DAILY
+  DEFECTS
+  TASKS
+  PROGRESS
+  HANDOVER
+  INSPECTION
+}
+
+model Report {
+  id          String     @id @default(cuid())
+  projectId   String
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type        ReportType
+  title       String
+  pdfUrl      String?
+  generatedBy String
+  generatedByUser User   @relation(fields: [generatedBy], references: [id])
+  createdAt   DateTime   @default(now())
+
+  @@index([projectId])
+}

@@ -1,0 +1,19 @@
+{
+  "name": "sitepilot",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "build": "pnpm --filter './apps/*' build",
+    "type-check": "pnpm --filter './apps/*' type-check",
+    "db:generate": "pnpm --filter '@sitepilot/api' db:generate",
+    "db:migrate": "pnpm --filter '@sitepilot/api' db:migrate",
+    "db:studio": "pnpm --filter '@sitepilot/api' db:studio",
+    "db:seed": "pnpm --filter '@sitepilot/api' db:seed"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

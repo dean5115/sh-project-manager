@@ -1,0 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sidebar-width: 260px;
+}
+
+html {
+  direction: rtl;
+  font-family: 'Heebo', sans-serif;
+}
+
+body {
+  @apply bg-gray-50 text-neutral-dark;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { @apply bg-gray-100; }
+::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-gray-400; }
+
+/* RTL utility */
+.rtl { direction: rtl; }
+.ltr { direction: ltr; }
+
+/* focus ring */
+*:focus-visible {
+  @apply outline-none ring-2 ring-primary/40 ring-offset-1;
+}
+
+/* card base */
+.card {
+  @apply bg-white rounded-xl shadow-card border border-gray-100 p-4;
+}
+
+/* badge */
+.badge {
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+}
