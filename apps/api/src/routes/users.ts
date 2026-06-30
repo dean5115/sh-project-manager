@@ -25,7 +25,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
   fastify.get('/users', async (request) => {
     const users = await fastify.prisma.user.findMany({
       where: { organizationId: request.user.organizationId },
-      select: { id: true, name: true, email: true, role: true, phone: true, createdAt: true },
+      select: { id: true, name: true, email: true, role: true, phone: true, specialty: true, createdAt: true },
       orderBy: { name: 'asc' },
     })
     return { data: users }
