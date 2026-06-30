@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { SignJWT } from 'jose'
 import { z } from 'zod'
 import { sendOtpEmail } from '../services/email.service'
+import { checkAccountLockout, recordFailedAttempt, clearFailedAttempts } from '../services/login-guard'
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'change-me')
 
@@ -64,14 +65,25 @@ export default async function authRoutes(fastify: FastifyInstance) {
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     const body = loginSchema.parse(request.body)
+
+    const lockMsg = checkAccountLockout(body.email)
+    if (lockMsg) return reply.status(429).send({ error: lockMsg })
+
     const user = await fastify.prisma.user.findUnique({
       where: { email: body.email },
       include: { organization: true },
     })
-    if (!user) return reply.status(401).send({ error: 'Invalid credentials' })
+    if (!user) {
+      recordFailedAttempt(body.email)
+      return reply.status(401).send({ error: 'Invalid credentials' })
+    }
 
     const valid = await bcrypt.compare(body.password, user.passwordHash)
-    if (!valid) return reply.status(401).send({ error: 'Invalid credentials' })
+    if (!valid) {
+      recordFailedAttempt(body.email)
+      return reply.status(401).send({ error: 'Invalid credentials' })
+    }
+    clearFailedAttempts(body.email)
 
     const token = await makeToken(user.id, user.organizationId, user.role, user.email)
     return reply.send({
@@ -117,14 +129,21 @@ export default async function authRoutes(fastify: FastifyInstance) {
       otp: z.string().length(6),
     }).parse(request.body)
 
+    const lockMsg = checkAccountLockout(email)
+    if (lockMsg) return reply.status(429).send({ error: lockMsg })
+
     const stored = otpStore.get(email)
     if (!stored) return reply.status(400).send({ error: 'לא נמצא קוד — בקש קוד חדש' })
     if (Date.now() > stored.expiresAt) {
       otpStore.delete(email)
       return reply.status(400).send({ error: 'הקוד פג תוקף — בקש קוד חדש' })
     }
-    if (stored.otp !== otp) return reply.status(400).send({ error: 'קוד שגוי' })
+    if (stored.otp !== otp) {
+      recordFailedAttempt(email)
+      return reply.status(400).send({ error: 'קוד שגוי' })
+    }
     otpStore.delete(email)
+    clearFailedAttempts(email)
 
     const contractor = await fastify.prisma.contractor.findFirst({
       where: { email, organizationId: stored.organizationId },
@@ -191,15 +210,25 @@ export default async function authRoutes(fastify: FastifyInstance) {
       password: z.string(),
     }).parse(request.body)
 
+    const lockMsg = checkAccountLockout(email)
+    if (lockMsg) return reply.status(429).send({ error: lockMsg })
+
     const user = await fastify.prisma.user.findUnique({
       where: { email },
       include: { organization: true },
     })
-    if (!user || user.role !== 'CONTRACTOR') return reply.status(401).send({ error: 'לא נמצא קבלן עם פרטים אלו' })
+    if (!user || user.role !== 'CONTRACTOR') {
+      recordFailedAttempt(email)
+      return reply.status(401).send({ error: 'לא נמצא קבלן עם פרטים אלו' })
+    }
     if (!user.passwordHash) return reply.status(400).send({ error: 'יש לבצע כניסה ראשונה עם קוד מייל' })
 
     const valid = await bcrypt.compare(password, user.passwordHash)
-    if (!valid) return reply.status(401).send({ error: 'סיסמה שגויה' })
+    if (!valid) {
+      recordFailedAttempt(email)
+      return reply.status(401).send({ error: 'סיסמה שגויה' })
+    }
+    clearFailedAttempts(email)
 
     const token = await makeToken(user.id, user.organizationId, user.role, user.email)
     return reply.send({ token, user: sanitizeUser(user), organization: user.organization })
