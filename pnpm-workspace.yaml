@@ -1,3 +1,10 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+
+onlyBuiltDependencies:
+  - puppeteer
+  - sharp
+  - '@prisma/client'
+  - prisma
+  - bcryptjs
