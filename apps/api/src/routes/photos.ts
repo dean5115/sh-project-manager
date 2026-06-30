@@ -24,6 +24,13 @@ export default async function photoRoutes(fastify: FastifyInstance) {
 
     if (!fileUrl) return reply.status(400).send({ error: 'No file uploaded' })
 
+    if (fields.projectId) {
+      const project = await fastify.prisma.project.findFirst({
+        where: { id: fields.projectId, organizationId: request.user.organizationId },
+      })
+      if (!project) return reply.status(404).send({ error: 'Project not found' })
+    }
+
     const photo = await fastify.prisma.photo.create({
       data: {
         url: fileUrl,
@@ -43,6 +50,10 @@ export default async function photoRoutes(fastify: FastifyInstance) {
 
   fastify.get('/projects/:projectId/photos', async (request, reply) => {
     const { projectId } = request.params as { projectId: string }
+    const project = await fastify.prisma.project.findFirst({
+      where: { id: projectId, organizationId: request.user.organizationId },
+    })
+    if (!project) return reply.status(404).send({ error: 'Project not found' })
     const photos = await fastify.prisma.photo.findMany({
       where: { projectId },
       orderBy: { takenAt: 'desc' },
@@ -53,16 +64,19 @@ export default async function photoRoutes(fastify: FastifyInstance) {
   fastify.put('/photos/:id/annotations', async (request, reply) => {
     const { id } = request.params as { id: string }
     const { annotations } = request.body as { annotations: object }
-    const photo = await fastify.prisma.photo.update({
-      where: { id },
+    const updated = await fastify.prisma.photo.updateMany({
+      where: { id, project: { organizationId: request.user.organizationId } },
       data: { annotations },
     })
-    return { data: photo }
+    if (!updated.count) return reply.status(404).send({ error: 'Not found' })
+    return { data: await fastify.prisma.photo.findUnique({ where: { id } }) }
   })
 
   fastify.delete('/photos/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
-    const photo = await fastify.prisma.photo.findUnique({ where: { id } })
+    const photo = await fastify.prisma.photo.findFirst({
+      where: { id, project: { organizationId: request.user.organizationId } },
+    })
     if (photo) {
       await deleteFile(photo.url)
       await fastify.prisma.photo.delete({ where: { id } })

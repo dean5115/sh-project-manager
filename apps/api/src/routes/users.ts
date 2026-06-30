@@ -13,7 +13,8 @@ const SPECIALTIES = [
 const inviteSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
-  role: z.enum(['PROJECT_MANAGER', 'ENGINEER', 'SUPERVISOR', 'CONTRACTOR', 'CLIENT']),
+  // CONTRACTOR לא נכלל בכוונה — קבלנים נרשמים דרך עמוד "קבלנים" (Contractor model + OTP), לא דרך הזמנה ישירה
+  role: z.enum(['PROJECT_MANAGER', 'ENGINEER', 'SUPERVISOR', 'CLIENT']),
   phone: z.string().optional(),
   password: z.string().min(6).default('Change1234!'),
   specialty: z.enum(SPECIALTIES).optional(),
@@ -58,10 +59,14 @@ export default async function userRoutes(fastify: FastifyInstance) {
     preHandler: [requireMinRole('OWNER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const { role } = z.object({ role: z.enum(['PROJECT_MANAGER', 'ENGINEER', 'SUPERVISOR', 'CONTRACTOR', 'CLIENT']) }).parse(request.body)
-    const user = await fastify.prisma.user.update({
-      where: { id },
+    const { role } = z.object({ role: z.enum(['PROJECT_MANAGER', 'ENGINEER', 'SUPERVISOR', 'CLIENT']) }).parse(request.body)
+    const updated = await fastify.prisma.user.updateMany({
+      where: { id, organizationId: request.user.organizationId },
       data: { role },
+    })
+    if (!updated.count) return reply.status(404).send({ error: 'Not found' })
+    const user = await fastify.prisma.user.findUnique({
+      where: { id },
       select: { id: true, name: true, email: true, role: true, specialty: true },
     })
     return { data: user }
@@ -74,9 +79,13 @@ export default async function userRoutes(fastify: FastifyInstance) {
     const { specialty } = z.object({
       specialty: z.enum(SPECIALTIES).nullable(),
     }).parse(request.body)
-    const user = await fastify.prisma.user.update({
-      where: { id },
+    const updated = await fastify.prisma.user.updateMany({
+      where: { id, organizationId: request.user.organizationId },
       data: { specialty: specialty as any },
+    })
+    if (!updated.count) return reply.status(404).send({ error: 'Not found' })
+    const user = await fastify.prisma.user.findUnique({
+      where: { id },
       select: { id: true, name: true, email: true, role: true, specialty: true },
     })
     return { data: user }

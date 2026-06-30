@@ -8,6 +8,10 @@ export default async function documentRoutes(fastify: FastifyInstance) {
 
   fastify.get('/projects/:projectId/documents', async (request, reply) => {
     const { projectId } = request.params as { projectId: string }
+    const project = await fastify.prisma.project.findFirst({
+      where: { id: projectId, organizationId: request.user.organizationId },
+    })
+    if (!project) return reply.status(404).send({ error: 'Project not found' })
     const docs = await fastify.prisma.document.findMany({
       where: { projectId },
       orderBy: { createdAt: 'desc' },
@@ -18,6 +22,10 @@ export default async function documentRoutes(fastify: FastifyInstance) {
 
   fastify.post('/projects/:projectId/documents', async (request, reply) => {
     const { projectId } = request.params as { projectId: string }
+    const project = await fastify.prisma.project.findFirst({
+      where: { id: projectId, organizationId: request.user.organizationId },
+    })
+    if (!project) return reply.status(404).send({ error: 'Project not found' })
     const parts = request.parts()
     const fields: Record<string, string> = {}
     let fileUrl = ''
@@ -49,8 +57,10 @@ export default async function documentRoutes(fastify: FastifyInstance) {
   })
 
   fastify.delete('/projects/:projectId/documents/:id', async (request, reply) => {
-    const { id } = request.params as { projectId: string; id: string }
-    const doc = await fastify.prisma.document.findUnique({ where: { id } })
+    const { projectId, id } = request.params as { projectId: string; id: string }
+    const doc = await fastify.prisma.document.findFirst({
+      where: { id, projectId, project: { organizationId: request.user.organizationId } },
+    })
     if (doc) {
       await deleteFile(doc.url)
       await fastify.prisma.document.delete({ where: { id } })

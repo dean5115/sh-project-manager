@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import multipart from '@fastify/multipart'
 import staticFiles from '@fastify/static'
+import rateLimit from '@fastify/rate-limit'
 import path from 'path'
 import fs from 'fs'
 import 'dotenv/config'
@@ -22,6 +23,11 @@ import organizationRoutes from './routes/organization'
 import paymentRoutes from './routes/payments'
 import receiptRoutes from './routes/receipts'
 import fieldReportRoutes from './routes/field-report'
+
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET is not set in production')
+  process.exit(1)
+}
 
 const fastify = Fastify({ logger: { level: 'info' } })
 
@@ -53,6 +59,13 @@ async function start() {
 
   await fastify.register(multipart, {
     limits: { fileSize: 100 * 1024 * 1024 }, // 100MB — לסרטונים עד 20 שניות
+  })
+
+  // הגנה כללית מפני בקשות מרובות; נקודות auth/OTP מקבלות מגבלה מחמירה יותר בקובץ auth.ts
+  await fastify.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: '1 minute',
   })
 
   await fastify.register(staticFiles, {

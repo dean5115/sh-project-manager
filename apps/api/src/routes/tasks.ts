@@ -59,24 +59,31 @@ export default async function taskRoutes(fastify: FastifyInstance) {
   })
 
   fastify.put('/projects/:projectId/tasks/:id', async (request, reply) => {
-    const { id } = request.params as { projectId: string; id: string }
+    const { projectId, id } = request.params as { projectId: string; id: string }
     const body = createSchema.partial().parse(request.body)
-    const task = await fastify.prisma.task.update({
-      where: { id },
+    const updated = await fastify.prisma.task.updateMany({
+      where: { id, projectId, project: { organizationId: request.user.organizationId } },
       data: { ...body, dueDate: body.dueDate ? new Date(body.dueDate) : undefined },
     })
-    return { data: task }
+    if (!updated.count) return reply.status(404).send({ error: 'Not found' })
+    return { data: await fastify.prisma.task.findUnique({ where: { id } }) }
   })
 
   fastify.delete('/projects/:projectId/tasks/:id', async (request, reply) => {
-    const { id } = request.params as { projectId: string; id: string }
-    await fastify.prisma.task.delete({ where: { id } })
-    return reply.status(204).send()
+    const { projectId, id } = request.params as { projectId: string; id: string }
+    const deleted = await fastify.prisma.task.deleteMany({
+      where: { id, projectId, project: { organizationId: request.user.organizationId } },
+    })
+    if (!deleted.count) return reply.status(404).send({ error: 'Not found' })
   })
 
   fastify.post('/projects/:projectId/tasks/:id/comments', async (request, reply) => {
-    const { id } = request.params as { projectId: string; id: string }
+    const { projectId, id } = request.params as { projectId: string; id: string }
     const { content } = z.object({ content: z.string().min(1) }).parse(request.body)
+    const task = await fastify.prisma.task.findFirst({
+      where: { id, projectId, project: { organizationId: request.user.organizationId } },
+    })
+    if (!task) return reply.status(404).send({ error: 'Not found' })
     const comment = await fastify.prisma.comment.create({
       data: { content, taskId: id, authorId: request.user.userId },
       include: { author: { select: { id: true, name: true } } },

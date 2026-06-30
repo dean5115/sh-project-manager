@@ -61,12 +61,13 @@ export default async function journalRoutes(fastify: FastifyInstance) {
   })
 
   fastify.put('/projects/:projectId/journals/:id', async (request, reply) => {
-    const { id } = request.params as { projectId: string; id: string }
+    const { projectId, id } = request.params as { projectId: string; id: string }
     const body = createSchema.partial().parse(request.body)
-    const journal = await fastify.prisma.dailyJournal.update({
-      where: { id },
+    const updated = await fastify.prisma.dailyJournal.updateMany({
+      where: { id, projectId, project: { organizationId: request.user.organizationId } },
       data: { ...body, date: body.date ? new Date(body.date) : undefined },
     })
-    return { data: journal }
+    if (!updated.count) return reply.status(404).send({ error: 'Not found' })
+    return { data: await fastify.prisma.dailyJournal.findUnique({ where: { id } }) }
   })
 }

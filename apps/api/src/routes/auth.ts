@@ -23,7 +23,9 @@ const loginSchema = z.object({
 })
 
 export default async function authRoutes(fastify: FastifyInstance) {
-  fastify.post('/auth/register', async (request, reply) => {
+  fastify.post('/auth/register', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     // הרשמה פתוחה רק להקמת הארגון הראשון — לאחר מכן נסגרת, וצוות נוסף מתווסף דרך הזמנה פנימית (Settings → Users)
     const orgCount = await fastify.prisma.organization.count()
     if (orgCount > 0) {
@@ -58,7 +60,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.post('/auth/login', async (request, reply) => {
+  fastify.post('/auth/login', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const body = loginSchema.parse(request.body)
     const user = await fastify.prisma.user.findUnique({
       where: { email: body.email },
@@ -78,7 +82,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
   })
 
   // שלב 1 — בקשת OTP לקבלן
-  fastify.post('/auth/contractor/request-otp', async (request, reply) => {
+  fastify.post('/auth/contractor/request-otp', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const { email } = z.object({ email: z.string().email() }).parse(request.body)
 
     // מחפש את הקבלן לפי מייל
@@ -103,7 +109,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
   })
 
   // שלב 2 — אימות OTP
-  fastify.post('/auth/contractor/verify-otp', async (request, reply) => {
+  fastify.post('/auth/contractor/verify-otp', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const { email, otp } = z.object({
       email: z.string().email(),
       otp: z.string().length(6),
@@ -175,7 +183,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
   })
 
   // כניסת קבלן עם סיסמה (לאחר שהוגדרה)
-  fastify.post('/auth/contractor/login', async (request, reply) => {
+  fastify.post('/auth/contractor/login', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const { email, password } = z.object({
       email: z.string().email(),
       password: z.string(),

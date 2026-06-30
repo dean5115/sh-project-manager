@@ -68,9 +68,9 @@ export default async function defectRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/projects/:projectId/defects/:id', async (request, reply) => {
-    const { id } = request.params as { projectId: string; id: string }
-    const defect = await fastify.prisma.defect.findUnique({
-      where: { id },
+    const { projectId, id } = request.params as { projectId: string; id: string }
+    const defect = await fastify.prisma.defect.findFirst({
+      where: { id, projectId, project: { organizationId: request.user.organizationId } },
       include: {
         assignedTo: { select: { id: true, name: true } },
         contractor: { select: { id: true, name: true } },
@@ -129,18 +129,23 @@ export default async function defectRoutes(fastify: FastifyInstance) {
   })
 
   fastify.put('/projects/:projectId/defects/:id', async (request, reply) => {
-    const { id } = request.params as { projectId: string; id: string }
+    const { projectId, id } = request.params as { projectId: string; id: string }
     const body = createSchema.partial().parse(request.body)
-    const defect = await fastify.prisma.defect.update({
-      where: { id },
+    const updated = await fastify.prisma.defect.updateMany({
+      where: { id, projectId, project: { organizationId: request.user.organizationId } },
       data: { ...body, dueDate: body.dueDate ? new Date(body.dueDate) : undefined },
     })
-    return { data: defect }
+    if (!updated.count) return reply.status(404).send({ error: 'Not found' })
+    return { data: await fastify.prisma.defect.findUnique({ where: { id } }) }
   })
 
   fastify.post('/projects/:projectId/defects/:id/comments', async (request, reply) => {
-    const { id } = request.params as { projectId: string; id: string }
+    const { projectId, id } = request.params as { projectId: string; id: string }
     const { content } = z.object({ content: z.string().min(1) }).parse(request.body)
+    const defect = await fastify.prisma.defect.findFirst({
+      where: { id, projectId, project: { organizationId: request.user.organizationId } },
+    })
+    if (!defect) return reply.status(404).send({ error: 'Not found' })
     const comment = await fastify.prisma.comment.create({
       data: { content, defectId: id, authorId: request.user.userId },
       include: { author: { select: { id: true, name: true } } },
