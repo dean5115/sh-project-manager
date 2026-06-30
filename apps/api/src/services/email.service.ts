@@ -1,27 +1,15 @@
-import nodemailer from 'nodemailer'
-
-function createTransport() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  })
-}
+import { Resend } from 'resend'
 
 export async function sendOtpEmail(to: string, otp: string, orgName: string) {
-  if (!process.env.SMTP_USER || process.env.SMTP_USER === 'your-gmail@gmail.com') {
+  if (!process.env.RESEND_API_KEY) {
     // מצב פיתוח — מדפיס את הקוד ללוג במקום לשלוח
     console.log(`\n📧 OTP for ${to}: ${otp}\n`)
     return
   }
 
-  const transporter = createTransport()
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || `SH - Project Manager <${process.env.SMTP_USER}>`,
+  const resend = new Resend(process.env.RESEND_API_KEY)
+  await resend.emails.send({
+    from: process.env.EMAIL_FROM || 'SH - Project Manager <onboarding@resend.dev>',
     to,
     subject: `קוד כניסה ל-SH - Project Manager — ${otp}`,
     html: `

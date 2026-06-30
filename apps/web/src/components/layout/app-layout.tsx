@@ -18,10 +18,11 @@ export function AppLayout({ children, title }: { children: React.ReactNode; titl
     if (!mounted) return
     if (!isAuthenticated()) { router.replace('/login'); return }
     if (user?.role === 'CONTRACTOR') router.replace('/portal/contractor')
+    if (user?.role === 'CLIENT') router.replace('/portal/client')
   }, [mounted, isAuthenticated, user, router])
 
   // Before mount: return null on both server and client — no hydration mismatch
-  if (!mounted || !isAuthenticated() || user?.role === 'CONTRACTOR') return null
+  if (!mounted || !isAuthenticated() || user?.role === 'CONTRACTOR' || user?.role === 'CLIENT') return null
 
   return (
     <div className="min-h-screen flex">

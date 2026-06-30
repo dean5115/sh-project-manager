@@ -24,7 +24,10 @@ export default function LoginPage() {
     try {
       const res = await api.post<AuthResponse>('/auth/login', { email, password })
       setAuth(res.token, res.user, res.organization)
-      router.replace(res.user.role === 'CONTRACTOR' ? '/portal/contractor' : '/dashboard')
+      const dest = res.user.role === 'CONTRACTOR' ? '/portal/contractor'
+        : res.user.role === 'CLIENT' ? '/portal/client'
+        : '/dashboard'
+      router.replace(dest)
     } catch (err: any) {
       setError(err.message || 'שגיאה בהתחברות')
     } finally {
