@@ -5,7 +5,7 @@ import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { Input, Textarea } from '@/components/ui/input'
-import { Plus, HardHat, Phone, Mail, Wrench, FolderKanban } from 'lucide-react'
+import { Plus, HardHat, Phone, Mail, Wrench, FolderKanban, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import type { Contractor, Project } from '@sitepilot/types'
 
@@ -15,6 +15,7 @@ export default function ContractorsPage() {
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignContractor, setAssignContractor] = useState<any>(null)
   const [selectedProjects, setSelectedProjects] = useState<string[]>([])
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
   const [form, setForm] = useState({ name: '', trade: '', contactName: '', phone: '', email: '', notes: '' })
   const set = (k: string) => (e: any) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
@@ -45,6 +46,14 @@ export default function ContractorsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['contractors'] })
       setAssignOpen(false)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/contractors/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contractors'] })
+      setDeleteTarget(null)
     },
   })
 
@@ -129,6 +138,13 @@ export default function ContractorsPage() {
                     <FolderKanban size={12} />
                     שייך לפרויקט
                   </button>
+                  <button
+                    onClick={() => setDeleteTarget(c)}
+                    className="flex items-center gap-1 text-gray-400 hover:text-danger text-xs"
+                  >
+                    <Trash2 size={12} />
+                    הסר
+                  </button>
                 </div>
               </div>
             ))}
@@ -185,6 +201,21 @@ export default function ContractorsPage() {
               שמור שיוך
             </Button>
             <Button variant="outline" onClick={() => setAssignOpen(false)}>ביטול</Button>
+          </div>
+        </div>
+      </Modal>
+      {/* Modal — אישור הסרה */}
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="הסרת קבלן" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            להסיר את <strong>{deleteTarget?.name}</strong>? הקבלן לא יוכל יותר להתחבר למסך הקבלנים.
+            משימות וליקויים משויכים יישארו במערכת.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="danger" onClick={() => deleteMutation.mutate(deleteTarget.id)} loading={deleteMutation.isPending}>
+              הסר קבלן
+            </Button>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>ביטול</Button>
           </div>
         </div>
       </Modal>

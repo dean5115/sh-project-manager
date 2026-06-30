@@ -85,9 +85,20 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
 
   fastify.delete('/contractors/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
-    await fastify.prisma.contractor.deleteMany({
+    const contractor = await fastify.prisma.contractor.findFirst({
       where: { id, organizationId: request.user.organizationId },
     })
+    if (!contractor) return reply.status(204).send()
+
+    await fastify.prisma.contractor.delete({ where: { id } })
+
+    // מבטל גם את חשבון הכניסה של הקבלן (אם נוצר), כדי שלא יוכל להמשיך להתחבר
+    if (contractor.email) {
+      await fastify.prisma.user.deleteMany({
+        where: { email: contractor.email, organizationId: request.user.organizationId, role: 'CONTRACTOR' },
+      })
+    }
+
     return reply.status(204).send()
   })
 }

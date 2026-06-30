@@ -194,7 +194,7 @@ model Task {
   assignedToId String?
   assignedTo   User?      @relation("TaskAssignee", fields: [assignedToId], references: [id])
   contractorId String?
-  contractor   Contractor? @relation(fields: [contractorId], references: [id])
+  contractor   Contractor? @relation(fields: [contractorId], references: [id], onDelete: SetNull)
   dueDate      DateTime?
   priority     Priority   @default(MEDIUM)
   status       TaskStatus @default(OPEN)
@@ -256,7 +256,7 @@ model Defect {
   assignedToId String?
   assignedTo   User?          @relation("DefectAssignee", fields: [assignedToId], references: [id])
   contractorId String?
-  contractor   Contractor?    @relation(fields: [contractorId], references: [id])
+  contractor   Contractor?    @relation(fields: [contractorId], references: [id], onDelete: SetNull)
   dueDate      DateTime?
   status       DefectStatus   @default(OPEN)
   createdById  String

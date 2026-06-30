@@ -81,4 +81,17 @@ export default async function userRoutes(fastify: FastifyInstance) {
     })
     return { data: user }
   })
+
+  fastify.delete('/users/:id', {
+    preHandler: [requireMinRole('OWNER')],
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (id === request.user.userId) {
+      return reply.status(400).send({ error: 'לא ניתן להסיר את החשבון שלך' })
+    }
+    await fastify.prisma.user.deleteMany({
+      where: { id, organizationId: request.user.organizationId },
+    })
+    return reply.status(204).send()
+  })
 }

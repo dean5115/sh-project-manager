@@ -7,9 +7,10 @@ import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { Plus, Wrench } from 'lucide-react'
+import { Plus, Wrench, Trash2 } from 'lucide-react'
 import { ROLE_LABELS, CATEGORY_LABELS } from '@/lib/utils'
 import { useState } from 'react'
+import { useAuthStore } from '@/store/auth'
 
 const ROLE_OPTIONS = [
   { value: 'PROJECT_MANAGER', label: 'מנהל פרויקט' },
@@ -34,8 +35,10 @@ const ROLE_COLORS: Record<string, string> = {
 
 export default function UsersPage() {
   const qc = useQueryClient()
+  const { user: currentUser } = useAuthStore()
   const [open, setOpen] = useState(false)
   const [specialtyUser, setSpecialtyUser] = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
   const [form, setForm] = useState({ name: '', email: '', role: 'ENGINEER', phone: '', password: 'Change1234!', specialty: '' })
   const set = (k: string) => (e: any) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
@@ -60,6 +63,14 @@ export default function UsersPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['users'] })
       setSpecialtyUser(null)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/users/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] })
+      setDeleteTarget(null)
     },
   })
 
@@ -115,14 +126,25 @@ export default function UsersPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setSpecialtyUser(user)}
-                    >
-                      <Wrench size={13} />
-                      הגדר התמחות
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setSpecialtyUser(user)}
+                      >
+                        <Wrench size={13} />
+                        הגדר התמחות
+                      </Button>
+                      {user.id !== currentUser?.id && (
+                        <button
+                          onClick={() => setDeleteTarget(user)}
+                          className="p-1.5 text-gray-400 hover:text-danger"
+                          title="הסר משתמש"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -169,16 +191,38 @@ export default function UsersPage() {
             user={specialtyUser}
             options={SPECIALTY_OPTIONS}
             onSave={(specialty) => specialtyMutation.mutate({ id: specialtyUser.id, specialty: specialty || null })}
+            onCancel={() => setSpecialtyUser(null)}
             loading={specialtyMutation.isPending}
+            error={specialtyMutation.isError ? (specialtyMutation.error as any)?.message : ''}
           />
         </Modal>
       )}
+
+      {/* Modal — אישור הסרה */}
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="הסרת משתמש" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            להסיר את <strong>{deleteTarget?.name}</strong> ({deleteTarget?.email})? הוא לא יוכל יותר להתחבר למערכת.
+          </p>
+          {deleteMutation.isError && (
+            <div className="bg-red-50 border border-red-200 text-danger rounded-lg px-3 py-2 text-sm">
+              {(deleteMutation.error as any)?.message}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Button variant="danger" onClick={() => deleteMutation.mutate(deleteTarget.id)} loading={deleteMutation.isPending}>
+              הסר משתמש
+            </Button>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>ביטול</Button>
+          </div>
+        </div>
+      </Modal>
     </AppLayout>
   )
 }
 
-function SpecialtyForm({ user, options, onSave, loading }: {
-  user: any; options: any[]; onSave: (s: string) => void; loading: boolean
+function SpecialtyForm({ user, options, onSave, onCancel, loading, error }: {
+  user: any; options: any[]; onSave: (s: string) => void; onCancel: () => void; loading: boolean; error?: string
 }) {
   const [val, setVal] = useState(user.specialty || '')
   return (
@@ -186,6 +230,11 @@ function SpecialtyForm({ user, options, onSave, loading }: {
       <p className="text-sm text-gray-600">
         בחר את תחום ההתמחות של <strong>{user.name}</strong>. ליקויים מקטגוריה זו יתשייכו אליו אוטומטית.
       </p>
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-danger rounded-lg px-3 py-2 text-sm">
+          {error}
+        </div>
+      )}
       <Select
         label="תחום התמחות"
         value={val}
@@ -194,7 +243,7 @@ function SpecialtyForm({ user, options, onSave, loading }: {
       />
       <div className="flex gap-2">
         <Button onClick={() => onSave(val)} loading={loading}>שמור</Button>
-        <Button variant="outline" onClick={() => {}}>ביטול</Button>
+        <Button variant="outline" onClick={onCancel}>ביטול</Button>
       </div>
     </div>
   )
