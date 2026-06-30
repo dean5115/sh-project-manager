@@ -45,7 +45,7 @@ export default function DefectsPage() {
 
   const [form, setForm] = useState({
     title: '', location: '', category: 'OTHER', description: '',
-    severity: 'MEDIUM', dueDate: '', status: 'OPEN',
+    severity: 'MEDIUM', dueDate: '', status: 'OPEN', contractorId: '',
   })
   const set = (k: string) => (e: any) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
@@ -55,11 +55,20 @@ export default function DefectsPage() {
     enabled: !!projectId,
   })
 
+  const { data: contractorsData } = useQuery({
+    queryKey: ['contractors'],
+    queryFn: () => api.get<{ data: any[] }>('/contractors'),
+  })
+  const contractorOptions = [
+    { value: '', label: 'ללא קבלן' },
+    ...(contractorsData?.data ?? []).map((c) => ({ value: c.id, label: `${c.name} (${c.trade})` })),
+  ]
+
   const filtered = (data?.data ?? []).filter((d) => !statusFilter || d.status === statusFilter)
 
   const createMutation = useMutation({
     mutationFn: async (d: typeof form) => {
-      const res = await api.post<{ data: any }>(`/projects/${projectId}/defects`, d)
+      const res = await api.post<{ data: any }>(`/projects/${projectId}/defects`, { ...d, contractorId: d.contractorId || undefined })
       if (quickPhoto) {
         const fd = new FormData()
         fd.append('file', quickPhoto)
@@ -72,7 +81,7 @@ export default function DefectsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['defects', projectId] })
       setCreateOpen(false)
-      setForm({ title: '', location: '', category: 'OTHER', description: '', severity: 'MEDIUM', dueDate: '', status: 'OPEN' })
+      setForm({ title: '', location: '', category: 'OTHER', description: '', severity: 'MEDIUM', dueDate: '', status: 'OPEN', contractorId: '' })
       setQuickPhoto(null)
     },
   })
@@ -191,6 +200,12 @@ export default function DefectsPage() {
             <Select label="חומרה" value={form.severity} onChange={set('severity')} options={SEVERITIES} />
             <Input label="תאריך יעד" type="date" value={form.dueDate} onChange={set('dueDate')} />
           </div>
+          <Select
+            label="שיוך לקבלן (יקבל התראה במייל עם קישור ישיר)"
+            value={form.contractorId}
+            onChange={set('contractorId')}
+            options={contractorOptions}
+          />
 
           {/* תמונה מהשטח — לצילום מהיר תוך כדי סיבוב באתר */}
           <div>

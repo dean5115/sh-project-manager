@@ -1,8 +1,12 @@
 import { FastifyInstance } from 'fastify'
 import { authenticate } from '../middleware/auth'
+import { sendDefectAssignedEmail } from '../services/email.service'
 import { z } from 'zod'
 
 const e2u = (v: unknown) => (v === '' ? undefined : v)
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://sh-project-manager-web.vercel.app'
+const SEVERITY_LABELS: Record<string, string> = { LOW: 'נמוכה', MEDIUM: 'בינונית', HIGH: 'גבוהה', CRITICAL: 'קריטי' }
 
 const createSchema = z.object({
   title: z.string().min(1),
@@ -32,6 +36,8 @@ export default async function defectRoutes(fastify: FastifyInstance) {
         OR: [
           { assignedToId: request.user.userId },
           { createdById: request.user.userId },
+          // קבלן מקושר ל-Defect דרך contractorId (לא assignedToId), והקשר ל-User הוא לפי מייל
+          { contractor: { email: request.user.email } },
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -111,6 +117,8 @@ export default async function defectRoutes(fastify: FastifyInstance) {
       },
       include: {
         assignedTo: { select: { id: true, name: true } },
+        contractor: true,
+        project: { select: { name: true, organization: { select: { name: true } } } },
       },
     })
 
@@ -122,6 +130,19 @@ export default async function defectRoutes(fastify: FastifyInstance) {
           body: defect.title,
           link: `/projects/${projectId}/defects/${defect.id}`,
         },
+      }).catch(() => {})
+    }
+
+    if (defect.contractor?.email) {
+      await sendDefectAssignedEmail({
+        to: defect.contractor.email,
+        contractorName: defect.contractor.contactName || defect.contractor.name,
+        defectTitle: defect.title,
+        projectName: defect.project.name,
+        severity: SEVERITY_LABELS[defect.severity] || defect.severity,
+        description: defect.description,
+        link: `${FRONTEND_URL}/portal/contractor?defect=${defect.id}`,
+        orgName: defect.project.organization.name,
       }).catch(() => {})
     }
 

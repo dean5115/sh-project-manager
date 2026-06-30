@@ -1,6 +1,6 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuthStore } from '@/store/auth'
 import { api } from '@/lib/api'
 import { Input } from '@/components/ui/input'
@@ -12,10 +12,27 @@ import type { AuthResponse } from '@sitepilot/types'
 type Step = 'email' | 'otp' | 'set-password' | 'login'
 
 export default function ContractorLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <ContractorLoginForm />
+    </Suspense>
+  )
+}
+
+function ContractorLoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { setAuth } = useAuthStore()
   const [step, setStep] = useState<Step>('email')
   const [email, setEmail] = useState('')
+
+  // קישור ישיר מתוך התראת מייל על ליקוי — שומר ומפנה לליקוי הספציפי אחרי הכניסה
+  const defectParam = searchParams.get('defect')
+  const destination = defectParam ? `/portal/contractor?defect=${defectParam}` : '/portal/contractor'
+  useEffect(() => {
+    const prefill = searchParams.get('email')
+    if (prefill) setEmail(prefill)
+  }, [searchParams])
   const [otp, setOtp] = useState('')
   const [setupToken, setSetupToken] = useState('')
   const [password, setPassword] = useState('')
@@ -49,7 +66,7 @@ export default function ContractorLoginPage() {
         setStep('set-password')
       } else {
         setAuth(res.token, res.user, res.organization)
-        router.replace('/portal/contractor')
+        router.replace(destination)
       }
     } catch (err: any) {
       setError(err.message || 'קוד שגוי — נסה שוב')
@@ -82,7 +99,7 @@ export default function ContractorLoginPage() {
     try {
       const res = await api.post<AuthResponse>('/auth/contractor/login', { email, password: loginPassword })
       setAuth(res.token, res.user, res.organization)
-      router.replace('/portal/contractor')
+      router.replace(destination)
     } catch (err: any) {
       setError(err.message || 'פרטים שגויים')
     } finally {

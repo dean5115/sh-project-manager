@@ -2,8 +2,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
@@ -41,8 +41,17 @@ const SEVERITIES = Object.entries(SEVERITY_LABELS).map(([value, label]) => ({ va
 type Tab = 'defects' | 'new' | 'plans' | 'journal'
 
 export default function ContractorPortalPage() {
+  return (
+    <Suspense fallback={null}>
+      <ContractorPortalContent />
+    </Suspense>
+  )
+}
+
+function ContractorPortalContent() {
   const { user, organization, logout, isAuthenticated } = useAuthStore()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('defects')
   const [selectedPlanProject, setSelectedPlanProject] = useState('')
@@ -53,14 +62,29 @@ export default function ContractorPortalPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadedMedia, setUploadedMedia] = useState<{ url: string; type: 'image' | 'video' }[]>([])
 
+  const deepLinkDefectId = searchParams.get('defect')
+
   useEffect(() => {
-    if (!isAuthenticated()) router.replace('/login')
-  }, [isAuthenticated, router])
+    if (!isAuthenticated()) {
+      const dest = deepLinkDefectId ? `/contractor-login?defect=${deepLinkDefectId}` : '/contractor-login'
+      router.replace(dest)
+    }
+  }, [isAuthenticated, router, deepLinkDefectId])
 
   const { data: myDefectsData, isLoading: loadingDefects } = useQuery({
     queryKey: ['defects-mine'],
     queryFn: () => api.get<{ data: (Defect & { project: { id: string; name: string }; assignedTo?: any; comments?: any[] })[] }>('/defects/mine'),
   })
+
+  // קישור ישיר מתוך התראת מייל — פותח אוטומטית את הליקוי הספציפי
+  useEffect(() => {
+    if (!deepLinkDefectId || !myDefectsData?.data) return
+    const target = myDefectsData.data.find((d) => d.id === deepLinkDefectId)
+    if (target) {
+      setTab('defects')
+      setOpenDefect(target)
+    }
+  }, [deepLinkDefectId, myDefectsData])
 
   const { data: projectsData } = useQuery({
     queryKey: ['projects'],

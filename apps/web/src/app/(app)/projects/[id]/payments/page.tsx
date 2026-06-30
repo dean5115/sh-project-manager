@@ -26,6 +26,8 @@ export default function PaymentsPage() {
   const [demandClientName, setDemandClientName] = useState('')
   const [editingReceiptNumId, setEditingReceiptNumId] = useState<string | null>(null)
   const [receiptNumInput, setReceiptNumInput] = useState('')
+  const [payTarget, setPayTarget] = useState<PaymentMilestone | null>(null)
+  const [payDateInput, setPayDateInput] = useState('')
 
   const { data: project } = useQuery({
     queryKey: ['project', id],
@@ -263,8 +265,7 @@ export default function PaymentsPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => updateMilestoneMutation.mutate({ mid: m.id, data: { status: 'PAID', paidDate: new Date().toISOString() } })}
-                        loading={updateMilestoneMutation.isPending}
+                        onClick={() => { setPayDateInput(new Date().toISOString().slice(0, 10)); setPayTarget(m) }}
                       >
                         סמן כשולם
                       </Button>
@@ -393,6 +394,32 @@ export default function PaymentsPage() {
             </a>
           </div>
           <Button variant="ghost" onClick={() => setDemandTarget(null)} className="w-full">סגור</Button>
+        </div>
+      </Modal>
+
+      <Modal open={!!payTarget} onClose={() => setPayTarget(null)} title="סימון כשולם" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            סימון הסעיף <strong>{payTarget?.title}</strong> כשולם. באיזה תאריך התקבל התשלום בפועל?
+          </p>
+          <Input
+            label="תאריך תשלום"
+            type="date"
+            value={payDateInput}
+            onChange={(e) => setPayDateInput(e.target.value)}
+          />
+          <div className="flex gap-2">
+            <Button
+              onClick={() => payTarget && updateMilestoneMutation.mutate(
+                { mid: payTarget.id, data: { status: 'PAID', paidDate: payDateInput ? new Date(payDateInput).toISOString() : new Date().toISOString() } },
+                { onSuccess: () => setPayTarget(null) }
+              )}
+              loading={updateMilestoneMutation.isPending}
+            >
+              אישור
+            </Button>
+            <Button variant="outline" onClick={() => setPayTarget(null)}>ביטול</Button>
+          </div>
         </div>
       </Modal>
     </AppLayout>
