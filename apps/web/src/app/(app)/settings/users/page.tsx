@@ -15,7 +15,6 @@ const ROLE_OPTIONS = [
   { value: 'PROJECT_MANAGER', label: 'מנהל פרויקט' },
   { value: 'ENGINEER', label: 'מהנדס ביצוע' },
   { value: 'SUPERVISOR', label: 'מפקח' },
-  { value: 'CONTRACTOR', label: 'קבלן' },
   { value: 'CLIENT', label: 'לקוח' },
 ]
 
@@ -143,6 +142,9 @@ export default function UsersPage() {
             <Input label="טלפון" value={form.phone} onChange={set('phone')} />
             <Select label="תפקיד" value={form.role} onChange={set('role')} options={ROLE_OPTIONS} />
           </div>
+          <p className="text-xs text-gray-400">
+            לרישום קבלן (עם גישה למסך הקבלנים) — השתמש בעמוד &quot;קבלנים&quot; בתפריט, לא בטופס הזה.
+          </p>
           <Select
             label="התמחות (לאוטומציה של ליקויים)"
             value={form.specialty}
