@@ -24,6 +24,12 @@ const loginSchema = z.object({
 
 export default async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/auth/register', async (request, reply) => {
+    // הרשמה פתוחה רק להקמת הארגון הראשון — לאחר מכן נסגרת, וצוות נוסף מתווסף דרך הזמנה פנימית (Settings → Users)
+    const orgCount = await fastify.prisma.organization.count()
+    if (orgCount > 0) {
+      return reply.status(403).send({ error: 'ההרשמה סגורה. לקבלת גישה למערכת פנה למנהל הארגון.' })
+    }
+
     const body = registerSchema.parse(request.body)
     const exists = await fastify.prisma.user.findUnique({ where: { email: body.email } })
     if (exists) return reply.status(409).send({ error: 'Email already registered' })
