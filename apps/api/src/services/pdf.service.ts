@@ -1,9 +1,13 @@
 import puppeteer, { Browser } from 'puppeteer'
 import path from 'path'
+import sharp from 'sharp'
 import { readFile } from './storage'
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif'])
 
+// תמונות מהפלאפון מגיעות לעיתים בכמה MB כל אחת — בלי דחיסה, מסמך עם כמה תמונות
+// יכול לגרום ל-Puppeteer לצרוך יותר זיכרון ממה שיש בשרת ה-free tier ולקרוס.
+// ממירים תמיד ל-JPEG מכווץ, מספיק גדול להצגה ברורה בדוח אך קטן בהרבה מהמקור.
 async function photoToBase64(url: string | undefined | null): Promise<string | null> {
   if (!url) return null
   const ext = path.extname(url).toLowerCase()
@@ -11,8 +15,18 @@ async function photoToBase64(url: string | undefined | null): Promise<string | n
   try {
     const buffer = await readFile(url)
     if (!buffer) return null
-    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/jpeg'
-    return `data:${mime};base64,${buffer.toString('base64')}`
+    try {
+      const resized = await sharp(buffer)
+        .rotate() // מתקן כיוון לפי EXIF (תמונות פלאפון)
+        .resize({ width: 1200, withoutEnlargement: true })
+        .jpeg({ quality: 70 })
+        .toBuffer()
+      return `data:image/jpeg;base64,${resized.toString('base64')}`
+    } catch {
+      // אם הדחיסה נכשלת (פורמט לא נתמך וכו') — נופלים חזרה למקור
+      const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/jpeg'
+      return `data:${mime};base64,${buffer.toString('base64')}`
+    }
   } catch {
     return null
   }
