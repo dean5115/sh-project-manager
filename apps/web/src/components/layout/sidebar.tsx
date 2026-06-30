@@ -111,6 +111,11 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           <LogOut size={16} />
           התנתק
         </button>
+        <div className="flex items-center justify-center gap-2 mt-2 text-[11px] text-primary-300">
+          <Link href="/terms" className="hover:text-white hover:underline">תנאי שימוש</Link>
+          <span>·</span>
+          <Link href="/accessibility" className="hover:text-white hover:underline">נגישות</Link>
+        </div>
       </div>
     </aside>
   )

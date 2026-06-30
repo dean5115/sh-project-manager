@@ -82,6 +82,12 @@ export default function RegisterPage() {
             </Link>
           </p>
         </form>
+
+        <div className="mt-5 flex items-center justify-center gap-3 text-xs text-primary-200">
+          <Link href="/terms" className="hover:text-white hover:underline">תנאי שימוש</Link>
+          <span>·</span>
+          <Link href="/accessibility" className="hover:text-white hover:underline">הצהרת נגישות</Link>
+        </div>
       </div>
     </div>
   )

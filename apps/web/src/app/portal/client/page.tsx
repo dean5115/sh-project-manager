@@ -41,6 +41,12 @@ export default function ClientPortalPage() {
         </button>
       </header>
 
+      <div className="flex items-center justify-center gap-3 text-[11px] text-gray-400 bg-white border-b border-gray-100 py-1">
+        <Link href="/terms" className="hover:text-primary hover:underline">תנאי שימוש</Link>
+        <span>·</span>
+        <Link href="/accessibility" className="hover:text-primary hover:underline">הצהרת נגישות</Link>
+      </div>
+
       <div className="p-4 max-w-2xl mx-auto">
         <h1 className="text-lg font-bold text-neutral-dark mb-1">שלום, {user?.name?.split(' ')[0]}</h1>
         <p className="text-sm text-gray-500 mb-4">פורטל לקוח — צפייה בפרויקטים</p>

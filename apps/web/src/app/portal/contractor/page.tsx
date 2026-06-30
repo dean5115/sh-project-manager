@@ -10,6 +10,7 @@ import { Input, Textarea } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
 import { PdfViewer } from '@/components/pdf/pdf-viewer'
+import Link from 'next/link'
 import {
   HardHat, LogOut, AlertTriangle, FileText, Layers,
   Plus, ChevronLeft, Calendar, CheckCircle2, Clock,
@@ -195,6 +196,12 @@ export default function ContractorPortalPage() {
           </button>
         </div>
       </header>
+
+      <div className="flex items-center justify-center gap-3 text-[11px] text-gray-400 bg-white border-b border-gray-100 py-1 shrink-0">
+        <Link href="/terms" className="hover:text-primary hover:underline">תנאי שימוש</Link>
+        <span>·</span>
+        <Link href="/accessibility" className="hover:text-primary hover:underline">הצהרת נגישות</Link>
+      </div>
 
       <div className="flex-1 overflow-y-auto pb-20">
 
