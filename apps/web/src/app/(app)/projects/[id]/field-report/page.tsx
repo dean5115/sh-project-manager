@@ -10,7 +10,7 @@ import {
   Check, X, Download, MessageCircle, Mail, FileText,
 } from 'lucide-react'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 type ReportType = 'DEFECTS' | 'INSPECTION' | 'HANDOVER'
 
@@ -30,6 +30,9 @@ interface Item {
 export default function FieldReportPage() {
   const { id: projectId } = useParams<{ id: string }>()
   const router = useRouter()
+
+  // מעיר את שרת ה-API מייד בכניסה לדף — כדי שכשלוחצים "סיום" הוא כבר ער ולא יאחר
+  useEffect(() => { api.get(`/projects/${projectId}`).catch(() => {}) }, [projectId])
 
   const [reportType, setReportType] = useState<ReportType | null>(null)
   const [items, setItems] = useState<Item[]>([])
@@ -70,7 +73,8 @@ export default function FieldReportPage() {
     setErrorMsg('')
     try {
       if (reportType === 'DEFECTS') {
-        for (const item of items) {
+        // יצירת כל הליקויים ועלייה של כל התמונות במקביל (במקום אחד-אחד)
+        await Promise.all(items.map(async (item) => {
           const defectRes = await api.post<{ data: any }>(`/projects/${projectId}/defects`, {
             title: item.note.slice(0, 60) || 'ממצא מהשטח',
             description: item.note || 'ממצא מהשטח',
@@ -83,7 +87,7 @@ export default function FieldReportPage() {
           fd.append('defectBeforeId', defectRes.data.id)
           fd.append('projectId', projectId)
           await api.upload('/photos/upload', fd)
-        }
+        }))
         const today = new Date().toISOString().slice(0, 10)
         const reportRes = await api.post<{ data: any }>('/reports/generate', {
           projectId,
@@ -94,19 +98,19 @@ export default function FieldReportPage() {
         })
         setResultReport(reportRes.data)
       } else {
-        const photoIds: string[] = []
-        for (const item of items) {
+        // העלאת כל התמונות במקביל — שמירת הסדר ע"י Promise.all
+        const uploads = await Promise.all(items.map(async (item) => {
           const fd = new FormData()
           fd.append('file', item.file)
           fd.append('projectId', projectId)
           fd.append('caption', item.note)
           const res = await api.upload<{ data: any }>('/photos/upload', fd)
-          photoIds.push(res.data.id)
-        }
+          return res.data.id
+        }))
         const reportRes = await api.post<{ data: any }>(`/projects/${projectId}/field-report`, {
           type: reportType,
           title: customTitle || undefined,
-          photoIds,
+          photoIds: uploads,
         })
         setResultReport(reportRes.data)
       }
