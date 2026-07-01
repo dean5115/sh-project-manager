@@ -23,8 +23,15 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname()
   const { user, organization, logout } = useAuthStore()
   const [installPrompt, setInstallPrompt] = useState<any>(null)
+  const [isIos, setIsIos] = useState(false)
+  const [isStandalone, setIsStandalone] = useState(false)
 
   useEffect(() => {
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent)
+    const standalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone
+    setIsIos(ios)
+    setIsStandalone(!!standalone)
+
     const handler = (e: Event) => {
       e.preventDefault()
       setInstallPrompt(e)
@@ -86,6 +93,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
       {/* User */}
       <div className="px-3 py-4 border-t border-primary-400/30">
+        {/* אנדרואיד — כפתור התקנה אוטומטי */}
         {installPrompt && (
           <button
             onClick={handleInstall}
@@ -94,6 +102,16 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             <Download size={16} />
             התקן אפליקציה
           </button>
+        )}
+        {/* אייפון — הנחייה ידנית (Safari לא תומך בהתקנה אוטומטית) */}
+        {isIos && !isStandalone && !installPrompt && (
+          <div className="mb-1 rounded-lg bg-white/10 px-3 py-2 text-xs text-primary-100 leading-relaxed">
+            <p className="font-medium text-white mb-0.5">
+              <Download size={12} className="inline ml-1" />
+              הוסף למסך הבית
+            </p>
+            <p>לחץ על כפתור <strong>השיתוף</strong> (⬆) ואז <strong>"הוסף למסך הבית"</strong></p>
+          </div>
         )}
         <div className="flex items-center gap-3 px-3 py-2 mb-1">
           <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-white text-sm font-bold">
