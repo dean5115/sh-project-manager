@@ -1,4 +1,5 @@
 'use client'
+import { useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { AppLayout } from '@/components/layout/app-layout'
@@ -54,8 +55,15 @@ export default function ReportsPage() {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState({ projectId: '', type: 'DAILY', title: '', dateFrom: '', dateTo: '' })
-  const [selectedProject, setSelectedProject] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<any>(null)
+
+  const [selectedProject, setSelectedProject] = useState('')
+
+  // קריאת ?project= מהכתובת (למשל כשמגיעים מדף דוח השטח)
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get('project')
+    if (p) setSelectedProject(p)
+  }, [])
 
   const { data: projects } = useQuery({
     queryKey: ['projects'],

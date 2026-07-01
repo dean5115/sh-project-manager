@@ -1,5 +1,5 @@
 'use client'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { api } from '@/lib/api'
 import { absoluteUrl } from '@/lib/utils'
 import { AppLayout } from '@/components/layout/app-layout'
@@ -29,6 +29,7 @@ interface Item {
 
 export default function FieldReportPage() {
   const { id: projectId } = useParams<{ id: string }>()
+  const router = useRouter()
 
   const [reportType, setReportType] = useState<ReportType | null>(null)
   const [items, setItems] = useState<Item[]>([])
@@ -264,6 +265,13 @@ export default function FieldReportPage() {
               )}
             </div>
 
+            <Button
+              onClick={() => router.push(`/reports?project=${projectId}`)}
+              className="w-full"
+            >
+              <FileText size={16} />
+              ראה בדוחות הפרויקט
+            </Button>
             <Button variant="ghost" onClick={resetAll} className="w-full">דוח שטח נוסף</Button>
           </div>
         )}
