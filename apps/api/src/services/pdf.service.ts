@@ -221,7 +221,7 @@ export async function generatePdf(options: PdfOptions): Promise<Buffer> {
 interface FieldReportOptions {
   title: string
   project: any
-  items: { photoUrl: string; note: string }[]
+  items: { photoUrl: string; note: string; planUrl?: string }[]
   branding?: Branding
   generatedByName?: string
 }
@@ -234,11 +234,16 @@ export async function generateFieldReportPdf(options: FieldReportOptions): Promi
 
   const itemsHtml = (await Promise.all(items.map(async (item, i) => {
     const src = await photoToBase64(item.photoUrl)
+    const planSrc = item.planUrl ? await photoToBase64(item.planUrl) : null
     return `
       <div class="field-item">
         <div class="field-item-num">${i + 1}</div>
         ${src ? `<img class="field-item-photo" src="${src}" />` : ''}
         <div class="field-item-note">${esc(item.note)}</div>
+        ${planSrc ? `
+          <div class="field-item-plan-label">מיקום על תוכנית:</div>
+          <img class="field-item-plan" src="${planSrc}" />
+        ` : ''}
       </div>
     `
   }))).join('')
@@ -264,6 +269,8 @@ export async function generateFieldReportPdf(options: FieldReportOptions): Promi
         .field-item-num { position: absolute; top: 10px; left: 10px; background: ${color}; color: #fff; width: 22px; height: 22px; border-radius: 50%; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
         .field-item-photo { width: 100%; max-height: 320px; object-fit: contain; border-radius: 8px; margin-bottom: 10px; display: block; background: #f8f9fa; }
         .field-item-note { font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+        .field-item-plan-label { font-size: 11px; font-weight: bold; color: ${color}; margin: 10px 0 4px; }
+        .field-item-plan { width: 100%; max-height: 300px; object-fit: contain; border-radius: 8px; display: block; background: #f8f9fa; border: 1px solid #eee; }
         .summary { font-size: 11px; color: #666; margin-bottom: 14px; }
         .signoff { margin-top: 30px; padding-top: 18px; border-top: 1px solid #eee; font-size: 13px; line-height: 1.6; page-break-inside: avoid; }
         .signoff .name { font-weight: bold; color: ${color}; }

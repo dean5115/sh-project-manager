@@ -160,15 +160,15 @@ export default function FieldReportPage() {
         })
         setResultReport(reportRes.data)
       } else {
-        const uploads = await Promise.all(items.flatMap(async (item) => {
+        const reportItems = await Promise.all(items.map(async (item) => {
           const captionParts = [item.room, item.planName ? `תוכנית: ${item.planName}` : '', item.note].filter(Boolean)
           const fd = new FormData()
           fd.append('file', item.file)
           fd.append('projectId', projectId)
           fd.append('caption', captionParts.join(' | '))
           const res = await api.upload<{ data: any }>('/photos/upload', fd)
-          const ids: string[] = [res.data.id]
-          // תמונת תוכנית מסומנת — מצורפת אחרי תמונת השטח
+          // תמונת תוכנית מסומנת — מוצמדת לאותו ממצא ולא נספרת בנפרד
+          let planPhotoId: string | undefined
           if (item.planUrl && item.planPin) {
             const blob = await generateAnnotatedPlanImage(item.planUrl, item.planPin)
             if (blob) {
@@ -177,15 +177,15 @@ export default function FieldReportPage() {
               planFd.append('projectId', projectId)
               planFd.append('caption', `מיקום על תוכנית: ${item.planName || ''}`)
               const planRes = await api.upload<{ data: any }>('/photos/upload', planFd)
-              ids.push(planRes.data.id)
+              planPhotoId = planRes.data.id
             }
           }
-          return ids
-        })).then(arr => arr.flat())
+          return { photoId: res.data.id as string, planPhotoId }
+        }))
         const reportRes = await api.post<{ data: any }>(`/projects/${projectId}/field-report`, {
           type: reportType,
           title: customTitle || undefined,
-          photoIds: uploads,
+          items: reportItems,
         })
         setResultReport(reportRes.data)
       }

@@ -8,8 +8,14 @@ import { z } from 'zod'
 const createSchema = z.object({
   type: z.enum(['INSPECTION', 'HANDOVER']),
   title: z.string().optional(),
-  photoIds: z.array(z.string()).min(1),
-})
+  // פורמט ישן — רשימת תמונות שטוחה; נשמר לתאימות לאחור
+  photoIds: z.array(z.string()).optional(),
+  // פורמט חדש — כל ממצא עם תמונת תוכנית מוצמדת אופציונלית
+  items: z.array(z.object({
+    photoId: z.string(),
+    planPhotoId: z.string().optional(),
+  })).optional(),
+}).refine((d) => (d.items?.length || d.photoIds?.length), { message: 'נדרשת לפחות תמונה אחת' })
 
 export default async function fieldReportRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate)
@@ -24,14 +30,20 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     })
     if (!project) return reply.status(404).send({ error: 'Project not found' })
 
+    const reqItems = body.items ?? (body.photoIds ?? []).map((pid) => ({ photoId: pid, planPhotoId: undefined as string | undefined }))
+    const allIds = reqItems.flatMap((it) => [it.photoId, it.planPhotoId]).filter((id): id is string => !!id)
     const photos = await fastify.prisma.photo.findMany({
-      where: { id: { in: body.photoIds }, projectId },
+      where: { id: { in: allIds }, projectId },
     })
     const photoById = new Map(photos.map((p) => [p.id, p]))
-    const items = body.photoIds
-      .map((pid) => photoById.get(pid))
-      .filter((p): p is NonNullable<typeof p> => !!p)
-      .map((p) => ({ photoUrl: p.url, note: p.caption || '' }))
+    const items = reqItems
+      .map((it) => {
+        const p = photoById.get(it.photoId)
+        if (!p) return null
+        const plan = it.planPhotoId ? photoById.get(it.planPhotoId) : undefined
+        return { photoUrl: p.url, note: p.caption || '', planUrl: plan?.url }
+      })
+      .filter((it): it is NonNullable<typeof it> => !!it)
 
     if (!items.length) return reply.status(400).send({ error: 'No valid photos found' })
 
