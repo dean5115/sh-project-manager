@@ -3,26 +3,33 @@ const SENDER_EMAIL = process.env.EMAIL_FROM_ADDRESS || 'Samhayke@gmail.com'
 const SENDER_NAME = 'SH - Project Manager'
 
 async function brevoSend(to: string, subject: string, html: string) {
+  console.log(`[EMAIL] brevoSend called. to=${to} key_set=${!!BREVO_API_KEY}`)
   if (!BREVO_API_KEY) {
-    console.log(`\n📧 [DEV] To: ${to} | Subject: ${subject}\n`)
+    console.log(`[EMAIL] No BREVO_API_KEY — skipping send`)
     return
   }
-  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      'api-key': BREVO_API_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      sender: { name: SENDER_NAME, email: SENDER_EMAIL },
-      to: [{ email: to }],
-      subject,
-      htmlContent: html,
-    }),
-  })
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Brevo error ${res.status}: ${err}`)
+  try {
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': BREVO_API_KEY.trim(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: { name: SENDER_NAME, email: SENDER_EMAIL },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html,
+      }),
+    })
+    const resText = await res.text()
+    console.log(`[EMAIL] Brevo response: ${res.status} — ${resText}`)
+    if (!res.ok) {
+      throw new Error(`Brevo error ${res.status}: ${resText}`)
+    }
+  } catch (err) {
+    console.error(`[EMAIL] fetch error:`, err)
+    throw err
   }
 }
 
