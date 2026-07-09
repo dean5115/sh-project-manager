@@ -1,7 +1,8 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, MapPin } from 'lucide-react'
+import { sameOriginUrl } from '@/lib/plan-annotation'
 
 interface Props {
   url: string
@@ -11,14 +12,56 @@ interface Props {
 }
 
 export function PlanPinPicker({ url, planName, onConfirm, onBack }: Props) {
-  const overlayRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const [pin, setPin] = useState<{ x: number; y: number } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const pdfjsLib = await import('pdfjs-dist')
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js'
+        const pdf = await pdfjsLib.getDocument(sameOriginUrl(url)).promise
+        if (cancelled) return
+        const page = await pdf.getPage(1)
+        if (cancelled) return
+
+        const canvas = canvasRef.current
+        const wrapper = wrapperRef.current
+        if (!canvas || !wrapper) return
+
+        const native = page.getViewport({ scale: 1 })
+        const cssWidth = wrapper.clientWidth || 360
+        const dpr = window.devicePixelRatio || 1
+        const scale = (cssWidth / native.width) * dpr
+        const viewport = page.getViewport({ scale })
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        canvas.style.width = '100%'
+        canvas.style.height = 'auto'
+
+        await page.render({ canvasContext: canvas.getContext('2d') as any, viewport }).promise
+        if (!cancelled) setLoading(false)
+      } catch (err) {
+        console.error('[PlanPinPicker]', err)
+        if (!cancelled) {
+          setError('לא ניתן לטעון את התוכנית')
+          setLoading(false)
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [url])
 
   function handleTap(e: React.MouseEvent<HTMLDivElement>) {
+    if (loading || error) return
     const rect = e.currentTarget.getBoundingClientRect()
     setPin({
-      x: Math.round(((e.clientX - rect.left) / rect.width) * 100),
-      y: Math.round(((e.clientY - rect.top) / rect.height) * 100),
+      x: Math.round(((e.clientX - rect.left) / rect.width) * 1000) / 10,
+      y: Math.round(((e.clientY - rect.top) / rect.height) * 1000) / 10,
     })
   }
 
@@ -40,24 +83,29 @@ export function PlanPinPicker({ url, planName, onConfirm, onBack }: Props) {
         )}
       </div>
 
-      {/* PDF + overlay */}
-      <div className="flex-1 relative overflow-hidden">
-        {/* PDF in iframe — pointer-events off so overlay catches clicks */}
-        <iframe
-          src={`${url}#toolbar=0&navpanes=0`}
-          className="absolute inset-0 w-full h-full border-0"
-          style={{ pointerEvents: 'none' }}
-          title={planName}
-        />
+      {/* Plan canvas */}
+      <div ref={wrapperRef} className="flex-1 overflow-auto bg-gray-100">
+        {loading && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center space-y-2">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-sm text-gray-500">טוען תוכנית...</p>
+            </div>
+          </div>
+        )}
+        {error && (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-sm text-danger">{error}</p>
+          </div>
+        )}
 
-        {/* Transparent click-capture overlay */}
         <div
-          ref={overlayRef}
-          className="absolute inset-0"
-          style={{ cursor: 'crosshair', background: 'transparent' }}
+          className="relative select-none"
+          style={{ cursor: 'crosshair', display: loading || error ? 'none' : 'block' }}
           onClick={handleTap}
         >
-          {/* Pin marker */}
+          <canvas ref={canvasRef} className="block" />
+
           {pin && (
             <div
               className="absolute pointer-events-none"
@@ -74,7 +122,7 @@ export function PlanPinPicker({ url, planName, onConfirm, onBack }: Props) {
 
       {/* Footer */}
       <div className="flex gap-2 px-4 py-3 border-t border-gray-100 bg-white shrink-0">
-        <Button className="flex-1" onClick={() => onConfirm(pin)} disabled={!pin}>
+        <Button className="flex-1" onClick={() => onConfirm(pin)} disabled={!pin || loading}>
           <MapPin size={15} />
           אשר מיקום
         </Button>
