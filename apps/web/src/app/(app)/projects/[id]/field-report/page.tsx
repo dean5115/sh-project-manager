@@ -7,13 +7,14 @@ import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import {
   Camera, Trash2, ArrowRight, AlertTriangle, Search, ClipboardCheck,
-  Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map,
+  Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map, Save,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { PlanPinPicker } from '@/components/pdf/plan-pin-picker'
 import { generateAnnotatedPlanImage } from '@/lib/plan-annotation'
+import { saveDraft, loadDraft, deleteDraft, type FieldReportDraft } from '@/lib/field-report-draft'
 
 type ReportType = 'DEFECTS' | 'INSPECTION' | 'HANDOVER'
 
@@ -63,7 +64,72 @@ export default function FieldReportPage() {
   const [planDialogOpen, setPlanDialogOpen] = useState(false)
   const [activePlan, setActivePlan] = useState<{ id: string; name: string; url: string } | null>(null)
 
+  // draft state
+  const [draftInfo, setDraftInfo] = useState<{ savedAt: number; count: number; type: ReportType } | null>(null)
+  const [draftSavedMsg, setDraftSavedMsg] = useState('')
+
   const typeInfo = TYPES.find((t) => t.value === reportType)
+
+  // בדיקה אם קיימת טיוטה שמורה לפרויקט זה
+  useEffect(() => {
+    if (!projectId) return
+    loadDraft(projectId).then((d) => {
+      if (d && d.items.length > 0) {
+        setDraftInfo({ savedAt: d.savedAt, count: d.items.length, type: d.reportType })
+      }
+    }).catch(() => {})
+  }, [projectId])
+
+  async function saveDraftNow() {
+    if (!reportType) return
+    const draft: FieldReportDraft = {
+      reportType,
+      customTitle,
+      savedAt: Date.now(),
+      items: items.map((it) => ({
+        note: it.note,
+        room: it.room,
+        planId: it.planId,
+        planName: it.planName,
+        planUrl: it.planUrl,
+        planPin: it.planPin,
+        fileName: it.file.name || 'photo.jpg',
+        fileType: it.file.type || 'image/jpeg',
+        blob: it.file,
+      })),
+    }
+    try {
+      await saveDraft(projectId, draft)
+      setDraftSavedMsg('הטיוטה נשמרה במכשיר — אפשר לחזור אליה מאוחר יותר')
+      setTimeout(() => setDraftSavedMsg(''), 4000)
+    } catch {
+      setErrorMsg('שמירת הטיוטה נכשלה')
+    }
+  }
+
+  async function resumeDraft() {
+    const d = await loadDraft(projectId)
+    if (!d) return
+    setReportType(d.reportType)
+    setCustomTitle(d.customTitle)
+    setItems(d.items.map((it) => ({
+      id: `${Date.now()}-${Math.random()}`,
+      file: new File([it.blob], it.fileName, { type: it.fileType }),
+      previewUrl: URL.createObjectURL(it.blob),
+      note: it.note,
+      room: it.room,
+      planId: it.planId,
+      planName: it.planName,
+      planUrl: it.planUrl,
+      planPin: it.planPin,
+    })))
+    setDraftInfo(null)
+  }
+
+  async function discardDraft() {
+    await deleteDraft(projectId)
+    setDraftInfo(null)
+  }
 
   // fetch project plans
   const { data: docsData } = useQuery({
@@ -189,6 +255,9 @@ export default function FieldReportPage() {
         })
         setResultReport(reportRes.data)
       }
+      // הדוח הופק — מוחקים את הטיוטה השמורה
+      deleteDraft(projectId).catch(() => {})
+      setDraftInfo(null)
     } catch (err: any) {
       setErrorMsg(err.message || 'שגיאה בהפקת הדוח')
     } finally {
@@ -224,6 +293,24 @@ export default function FieldReportPage() {
         {/* Step 1: choose type */}
         {!reportType && !resultReport && (
           <div className="space-y-3">
+            {/* טיוטה שמורה */}
+            {draftInfo && (
+              <div className="card border-2 border-secondary/40 bg-orange-50/40 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Save size={16} className="text-secondary" />
+                  <p className="text-sm font-semibold text-neutral-dark">
+                    יש דוח שמור — {TYPES.find((t) => t.value === draftInfo.type)?.label}
+                  </p>
+                </div>
+                <p className="text-xs text-gray-500">
+                  {draftInfo.count} ממצאים · נשמר ב-{new Date(draftInfo.savedAt).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={resumeDraft} className="flex-1">המשך את הדוח</Button>
+                  <Button size="sm" variant="outline" onClick={discardDraft}>מחק</Button>
+                </div>
+              </div>
+            )}
             <p className="text-sm text-gray-500">בחר סוג דוח — תוכל לצלם ולתעד ממצאים בשטח ולקבל PDF מוכן בסוף</p>
             {TYPES.map(({ value, label, desc, icon: Icon }) => (
               <button
@@ -364,9 +451,14 @@ export default function FieldReportPage() {
                   placeholder={`${typeInfo?.label} — שם הפרויקט`}
                 />
                 {errorMsg && <p className="text-sm text-danger">{errorMsg}</p>}
+                {draftSavedMsg && <p className="text-sm text-green-600 text-center">{draftSavedMsg}</p>}
                 <Button onClick={finish} loading={finishing} className="w-full" size="lg">
                   <FileText size={16} />
                   סיום והפקת דוח ({items.length})
+                </Button>
+                <Button variant="outline" onClick={saveDraftNow} className="w-full">
+                  <Save size={15} />
+                  שמור טיוטה — המשך מאוחר יותר
                 </Button>
               </div>
             )}
