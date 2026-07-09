@@ -1,18 +1,36 @@
-import { Resend } from 'resend'
+const BREVO_API_KEY = process.env.BREVO_API_KEY
+const SENDER_EMAIL = process.env.EMAIL_FROM_ADDRESS || 'Samhayke@gmail.com'
+const SENDER_NAME = 'SH - Project Manager'
 
-export async function sendOtpEmail(to: string, otp: string, orgName: string) {
-  if (!process.env.RESEND_API_KEY) {
-    // מצב פיתוח — מדפיס את הקוד ללוג במקום לשלוח
-    console.log(`\n📧 OTP for ${to}: ${otp}\n`)
+async function brevoSend(to: string, subject: string, html: string) {
+  if (!BREVO_API_KEY) {
+    console.log(`\n📧 [DEV] To: ${to} | Subject: ${subject}\n`)
     return
   }
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': BREVO_API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: SENDER_NAME, email: SENDER_EMAIL },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Brevo error ${res.status}: ${err}`)
+  }
+}
 
-  const resend = new Resend(process.env.RESEND_API_KEY)
-  await resend.emails.send({
-    from: process.env.EMAIL_FROM || 'SH - Project Manager <onboarding@resend.dev>',
+export async function sendOtpEmail(to: string, otp: string, orgName: string) {
+  await brevoSend(
     to,
-    subject: `קוד כניסה ל-SH - Project Manager — ${otp}`,
-    html: `
+    `קוד כניסה ל-SH - Project Manager — ${otp}`,
+    `
       <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
         <div style="background: #1B4F72; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
           <h1 style="color: white; margin: 0; font-size: 24px;">SH - Project Manager</h1>
@@ -30,7 +48,7 @@ export async function sendOtpEmail(to: string, otp: string, orgName: string) {
         <p style="color: #888; font-size: 12px; text-align: center;">אם לא ביקשת קוד זה, התעלם מהמייל.</p>
       </div>
     `,
-  })
+  )
 }
 
 interface DefectAssignedEmailOptions {
@@ -46,18 +64,10 @@ interface DefectAssignedEmailOptions {
 
 export async function sendDefectAssignedEmail(opts: DefectAssignedEmailOptions) {
   const { to, contractorName, defectTitle, projectName, severity, description, link, orgName } = opts
-
-  if (!process.env.RESEND_API_KEY) {
-    console.log(`\n📧 Defect assigned email for ${to}: ${defectTitle} — ${link}\n`)
-    return
-  }
-
-  const resend = new Resend(process.env.RESEND_API_KEY)
-  await resend.emails.send({
-    from: process.env.EMAIL_FROM || 'SH - Project Manager <onboarding@resend.dev>',
+  await brevoSend(
     to,
-    subject: `ליקוי חדש שויך אליך — ${defectTitle}`,
-    html: `
+    `ליקוי חדש שויך אליך — ${defectTitle}`,
+    `
       <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
         <div style="background: #1B4F72; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
           <h1 style="color: white; margin: 0; font-size: 24px;">SH - Project Manager</h1>
@@ -82,5 +92,5 @@ export async function sendDefectAssignedEmail(opts: DefectAssignedEmailOptions) 
         <p style="color: #888; font-size: 12px; text-align: center;">אם הקישור לא נפתח, התחבר/י לפורטל הקבלנים ישירות.</p>
       </div>
     `,
-  })
+  )
 }
