@@ -20,11 +20,19 @@ const TYPES: { value: ReportType; label: string; desc: string; icon: typeof Aler
   { value: 'HANDOVER', label: 'דוח מסירה', desc: 'תיעוד מצב הנכס לקראת מסירה', icon: ClipboardCheck },
 ]
 
+const ROOMS = [
+  'מטבח', 'סלון', 'כניסה', 'מסדרון',
+  'חדר שינה 1', 'חדר שינה 2', 'חדר שינה 3',
+  'חדר אמבטיה', 'שירותים', 'מרפסת',
+  'חניה', 'חדר ילדים', 'חדר עבודה', 'גג',
+]
+
 interface Item {
   id: string
   file: File
   previewUrl: string
   note: string
+  room: string
 }
 
 export default function FieldReportPage() {
@@ -38,6 +46,8 @@ export default function FieldReportPage() {
   const [items, setItems] = useState<Item[]>([])
   const [pendingPhoto, setPendingPhoto] = useState<{ file: File; previewUrl: string } | null>(null)
   const [pendingNote, setPendingNote] = useState('')
+  const [pendingRoom, setPendingRoom] = useState('')
+  const [isCustomRoom, setIsCustomRoom] = useState(false)
   const [customTitle, setCustomTitle] = useState('')
   const [finishing, setFinishing] = useState(false)
   const [resultReport, setResultReport] = useState<any>(null)
@@ -56,11 +66,13 @@ export default function FieldReportPage() {
   function addItem() {
     if (!pendingPhoto) return
     setItems((prev) => [
-      { id: `${Date.now()}-${Math.random()}`, file: pendingPhoto.file, previewUrl: pendingPhoto.previewUrl, note: pendingNote },
+      { id: `${Date.now()}-${Math.random()}`, file: pendingPhoto.file, previewUrl: pendingPhoto.previewUrl, note: pendingNote, room: pendingRoom },
       ...prev,
     ])
     setPendingPhoto(null)
     setPendingNote('')
+    setPendingRoom('')
+    setIsCustomRoom(false)
   }
 
   function removeItem(id: string) {
@@ -75,9 +87,10 @@ export default function FieldReportPage() {
       if (reportType === 'DEFECTS') {
         // יצירת כל הליקויים ועלייה של כל התמונות במקביל (במקום אחד-אחד)
         await Promise.all(items.map(async (item) => {
+          const prefix = item.room ? `[${item.room}] ` : ''
           const defectRes = await api.post<{ data: any }>(`/projects/${projectId}/defects`, {
-            title: item.note.slice(0, 60) || 'ממצא מהשטח',
-            description: item.note || 'ממצא מהשטח',
+            title: `${prefix}${item.note}`.slice(0, 60) || item.room || 'ממצא מהשטח',
+            description: item.room ? `${item.room}: ${item.note || 'ממצא מהשטח'}` : item.note || 'ממצא מהשטח',
             category: 'OTHER',
             severity: 'MEDIUM',
             status: 'OPEN',
@@ -103,7 +116,7 @@ export default function FieldReportPage() {
           const fd = new FormData()
           fd.append('file', item.file)
           fd.append('projectId', projectId)
-          fd.append('caption', item.note)
+          fd.append('caption', item.room ? `${item.room}: ${item.note}` : item.note)
           const res = await api.upload<{ data: any }>('/photos/upload', fd)
           return res.data.id
         }))
@@ -129,6 +142,8 @@ export default function FieldReportPage() {
     setItems([])
     setPendingPhoto(null)
     setPendingNote('')
+    setPendingRoom('')
+    setIsCustomRoom(false)
     setCustomTitle('')
     setResultReport(null)
     setErrorMsg('')
@@ -179,18 +194,60 @@ export default function FieldReportPage() {
             {pendingPhoto ? (
               <div className="card space-y-3">
                 <img src={pendingPhoto.previewUrl} className="w-full max-h-64 object-contain rounded-xl bg-gray-50" />
+
+                {/* בחירת חדר / אזור */}
+                <div>
+                  <p className="text-xs font-medium text-gray-500 mb-2">חדר / אזור (אופציונלי)</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ROOMS.map((room) => (
+                      <button
+                        key={room}
+                        type="button"
+                        onClick={() => { setIsCustomRoom(false); setPendingRoom(pendingRoom === room ? '' : room) }}
+                        className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                          pendingRoom === room && !isCustomRoom
+                            ? 'bg-primary text-white border-primary'
+                            : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-primary/40'
+                        }`}
+                      >
+                        {room}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => { setIsCustomRoom(true); setPendingRoom('') }}
+                      className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                        isCustomRoom
+                          ? 'bg-secondary text-white border-secondary'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-secondary/40'
+                      }`}
+                    >
+                      אחר...
+                    </button>
+                  </div>
+                  {isCustomRoom && (
+                    <input
+                      type="text"
+                      value={pendingRoom}
+                      onChange={(e) => setPendingRoom(e.target.value)}
+                      placeholder="שם החדר / האזור..."
+                      autoFocus
+                      className="mt-2 w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-primary"
+                    />
+                  )}
+                </div>
+
                 <Textarea
                   value={pendingNote}
                   onChange={(e) => setPendingNote(e.target.value)}
                   placeholder="כתוב ממצא לתמונה הזו..."
-                  autoFocus
                 />
                 <div className="flex gap-2">
                   <Button onClick={addItem} className="flex-1">
                     <Check size={14} />
                     הוסף לדוח
                   </Button>
-                  <Button variant="outline" onClick={() => setPendingPhoto(null)}>
+                  <Button variant="outline" onClick={() => { setPendingPhoto(null); setPendingRoom(''); setIsCustomRoom(false) }}>
                     <X size={14} />
                   </Button>
                 </div>
@@ -210,7 +267,14 @@ export default function FieldReportPage() {
                 {items.map((item) => (
                   <div key={item.id} className="card flex items-center gap-3">
                     <img src={item.previewUrl} className="w-16 h-16 object-cover rounded-lg shrink-0" />
-                    <p className="flex-1 text-sm text-gray-600 line-clamp-2">{item.note || '(ללא הערה)'}</p>
+                    <div className="flex-1 min-w-0">
+                      {item.room && (
+                        <span className="inline-block text-xs bg-primary-50 text-primary px-2 py-0.5 rounded-full mb-1">
+                          {item.room}
+                        </span>
+                      )}
+                      <p className="text-sm text-gray-600 line-clamp-2">{item.note || '(ללא הערה)'}</p>
+                    </div>
                     <button onClick={() => removeItem(item.id)} className="p-1.5 text-gray-400 hover:text-danger shrink-0">
                       <Trash2 size={15} />
                     </button>

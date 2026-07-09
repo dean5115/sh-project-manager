@@ -14,11 +14,10 @@ import type { Project, Task, Defect } from '@sitepilot/types'
 export default function DashboardPage() {
   const { user } = useAuthStore()
 
-  const { data: projects, isFetching } = useQuery({
+  const { data: projects, isLoading, isFetching } = useQuery({
     queryKey: ['projects'],
     queryFn: () => api.get<{ data: (Project & { _count: any })[] }>('/projects'),
-    staleTime: 0,          // תמיד טעינה מחדש בכניסה לדשבורד
-    refetchOnMount: true,
+    staleTime: 60_000,
     refetchOnWindowFocus: true,
   })
 
@@ -86,7 +85,23 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          {active.length === 0 ? (
+          {isLoading ? (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="card animate-pulse">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="h-4 bg-gray-200 rounded w-2/3" />
+                    <div className="h-5 bg-gray-200 rounded-full w-16" />
+                  </div>
+                  <div className="h-3 bg-gray-100 rounded w-1/2 mb-3" />
+                  <div className="flex gap-3">
+                    <div className="h-3 bg-gray-100 rounded w-16" />
+                    <div className="h-3 bg-gray-100 rounded w-16" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : active.length === 0 ? (
             <div className="card text-center py-12">
               <FolderKanban size={40} className="text-gray-300 mx-auto mb-3" />
               <p className="text-gray-500 text-sm">אין פרויקטים פעילים</p>
