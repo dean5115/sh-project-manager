@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import {
   Camera, Trash2, ArrowRight, AlertTriangle, Search, ClipboardCheck,
-  Check, X, Download, MessageCircle, Mail, FileText,
+  Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { PlanPinPicker } from '@/components/pdf/plan-pin-picker'
 
 type ReportType = 'DEFECTS' | 'INSPECTION' | 'HANDOVER'
 
@@ -33,13 +35,15 @@ interface Item {
   previewUrl: string
   note: string
   room: string
+  planId?: string
+  planName?: string
+  planPin?: { x: number; y: number }
 }
 
 export default function FieldReportPage() {
   const { id: projectId } = useParams<{ id: string }>()
   const router = useRouter()
 
-  // מעיר את שרת ה-API מייד בכניסה לדף — כדי שכשלוחצים "סיום" הוא כבר ער ולא יאחר
   useEffect(() => { api.get(`/projects/${projectId}`).catch(() => {}) }, [projectId])
 
   const [reportType, setReportType] = useState<ReportType | null>(null)
@@ -53,7 +57,20 @@ export default function FieldReportPage() {
   const [resultReport, setResultReport] = useState<any>(null)
   const [errorMsg, setErrorMsg] = useState('')
 
+  // plan annotation state
+  const [planDialogOpen, setPlanDialogOpen] = useState(false)
+  const [activePlan, setActivePlan] = useState<{ id: string; name: string; url: string } | null>(null)
+
   const typeInfo = TYPES.find((t) => t.value === reportType)
+
+  // fetch project plans
+  const { data: docsData } = useQuery({
+    queryKey: ['documents', projectId],
+    queryFn: () => api.get<{ data: any[] }>(`/projects/${projectId}/documents`),
+    staleTime: 60_000,
+    enabled: !!projectId,
+  })
+  const plans = (docsData?.data ?? []).filter((d: any) => d.type === 'PLAN')
 
   function handlePhotoPicked(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -63,16 +80,33 @@ export default function FieldReportPage() {
     e.target.value = ''
   }
 
-  function addItem() {
+  function handleAddClick() {
     if (!pendingPhoto) return
-    setItems((prev) => [
-      { id: `${Date.now()}-${Math.random()}`, file: pendingPhoto.file, previewUrl: pendingPhoto.previewUrl, note: pendingNote, room: pendingRoom },
-      ...prev,
-    ])
+    if (plans.length > 0) {
+      setPlanDialogOpen(true)
+    } else {
+      doAddItem()
+    }
+  }
+
+  function doAddItem(planData?: { planId: string; planName: string; planPin: { x: number; y: number } | null }) {
+    if (!pendingPhoto) return
+    setItems((prev) => [{
+      id: `${Date.now()}-${Math.random()}`,
+      file: pendingPhoto.file,
+      previewUrl: pendingPhoto.previewUrl,
+      note: pendingNote,
+      room: pendingRoom,
+      planId: planData?.planId,
+      planName: planData?.planName,
+      planPin: planData?.planPin ?? undefined,
+    }, ...prev])
     setPendingPhoto(null)
     setPendingNote('')
     setPendingRoom('')
     setIsCustomRoom(false)
+    setPlanDialogOpen(false)
+    setActivePlan(null)
   }
 
   function removeItem(id: string) {
@@ -85,12 +119,12 @@ export default function FieldReportPage() {
     setErrorMsg('')
     try {
       if (reportType === 'DEFECTS') {
-        // יצירת כל הליקויים ועלייה של כל התמונות במקביל (במקום אחד-אחד)
         await Promise.all(items.map(async (item) => {
-          const prefix = item.room ? `[${item.room}] ` : ''
+          const locationParts = [item.room, item.planName ? `תוכנית: ${item.planName}` : ''].filter(Boolean)
+          const prefix = locationParts.length ? `[${locationParts.join(' | ')}] ` : ''
           const defectRes = await api.post<{ data: any }>(`/projects/${projectId}/defects`, {
-            title: `${prefix}${item.note}`.slice(0, 60) || item.room || 'ממצא מהשטח',
-            description: item.room ? `${item.room}: ${item.note || 'ממצא מהשטח'}` : item.note || 'ממצא מהשטח',
+            title: `${prefix}${item.note}`.slice(0, 60) || item.room || item.planName || 'ממצא מהשטח',
+            description: [locationParts.join(' | '), item.note || 'ממצא מהשטח'].filter(Boolean).join('\n'),
             category: 'OTHER',
             severity: 'MEDIUM',
             status: 'OPEN',
@@ -111,12 +145,12 @@ export default function FieldReportPage() {
         })
         setResultReport(reportRes.data)
       } else {
-        // העלאת כל התמונות במקביל — שמירת הסדר ע"י Promise.all
         const uploads = await Promise.all(items.map(async (item) => {
+          const captionParts = [item.room, item.planName ? `תוכנית: ${item.planName}` : '', item.note].filter(Boolean)
           const fd = new FormData()
           fd.append('file', item.file)
           fd.append('projectId', projectId)
-          fd.append('caption', item.room ? `${item.room}: ${item.note}` : item.note)
+          fd.append('caption', captionParts.join(' | '))
           const res = await api.upload<{ data: any }>('/photos/upload', fd)
           return res.data.id
         }))
@@ -147,6 +181,8 @@ export default function FieldReportPage() {
     setCustomTitle('')
     setResultReport(null)
     setErrorMsg('')
+    setPlanDialogOpen(false)
+    setActivePlan(null)
   }
 
   return (
@@ -243,7 +279,7 @@ export default function FieldReportPage() {
                   placeholder="כתוב ממצא לתמונה הזו..."
                 />
                 <div className="flex gap-2">
-                  <Button onClick={addItem} className="flex-1">
+                  <Button onClick={handleAddClick} className="flex-1">
                     <Check size={14} />
                     הוסף לדוח
                   </Button>
@@ -268,11 +304,19 @@ export default function FieldReportPage() {
                   <div key={item.id} className="card flex items-center gap-3">
                     <img src={item.previewUrl} className="w-16 h-16 object-cover rounded-lg shrink-0" />
                     <div className="flex-1 min-w-0">
-                      {item.room && (
-                        <span className="inline-block text-xs bg-primary-50 text-primary px-2 py-0.5 rounded-full mb-1">
-                          {item.room}
-                        </span>
-                      )}
+                      <div className="flex flex-wrap gap-1 mb-1">
+                        {item.room && (
+                          <span className="text-xs bg-primary-50 text-primary px-2 py-0.5 rounded-full">
+                            {item.room}
+                          </span>
+                        )}
+                        {item.planName && (
+                          <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <MapPin size={10} />
+                            {item.planName}{item.planPin ? ' ✓' : ''}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm text-gray-600 line-clamp-2">{item.note || '(ללא הערה)'}</p>
                     </div>
                     <button onClick={() => removeItem(item.id)} className="p-1.5 text-gray-400 hover:text-danger shrink-0">
@@ -333,10 +377,7 @@ export default function FieldReportPage() {
               )}
             </div>
 
-            <Button
-              onClick={() => router.push(`/reports?project=${projectId}`)}
-              className="w-full"
-            >
+            <Button onClick={() => router.push(`/reports?project=${projectId}`)} className="w-full">
               <FileText size={16} />
               ראה בדוחות הפרויקט
             </Button>
@@ -344,6 +385,61 @@ export default function FieldReportPage() {
           </div>
         )}
       </div>
+
+      {/* Plan selection dialog — bottom sheet */}
+      {planDialogOpen && (
+        <div className="fixed inset-0 z-40 flex items-end">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setPlanDialogOpen(false)}
+          />
+          <div className="relative w-full bg-white rounded-t-2xl p-4 space-y-3 max-h-[75vh] overflow-auto">
+            <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto" />
+            <div className="flex items-center gap-2 justify-center">
+              <Map size={18} className="text-primary" />
+              <p className="font-semibold text-neutral-dark">סמן מיקום על תוכנית?</p>
+            </div>
+            <p className="text-xs text-gray-400 text-center">בחר תוכנית לסימון המיקום המדויק של הממצא</p>
+
+            <div className="space-y-2 pt-1">
+              {plans.map((plan: any) => (
+                <button
+                  key={plan.id}
+                  onClick={() => {
+                    setPlanDialogOpen(false)
+                    setActivePlan({ id: plan.id, name: plan.name, url: absoluteUrl(plan.url) })
+                  }}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-primary/40 hover:bg-primary-50/30 text-right transition-colors"
+                >
+                  <div className="w-9 h-9 bg-primary-50 rounded-lg flex items-center justify-center shrink-0">
+                    <FileText size={16} className="text-primary" />
+                  </div>
+                  <span className="text-sm font-medium text-neutral-dark flex-1 truncate">{plan.name}</span>
+                  <MapPin size={14} className="text-gray-300 shrink-0" />
+                </button>
+              ))}
+            </div>
+
+            <Button
+              variant="outline"
+              onClick={() => { setPlanDialogOpen(false); doAddItem() }}
+              className="w-full mt-2"
+            >
+              דלג — הוסף ללא סימון על תוכנית
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Full-screen plan pin picker */}
+      {activePlan && (
+        <PlanPinPicker
+          url={activePlan.url}
+          planName={activePlan.name}
+          onConfirm={(pin) => doAddItem({ planId: activePlan.id, planName: activePlan.name, planPin: pin })}
+          onBack={() => { setActivePlan(null); setPlanDialogOpen(true) }}
+        />
+      )}
     </AppLayout>
   )
 }

@@ -3,6 +3,10 @@ const API_URL = process.env.API_URL || 'http://127.0.0.1:3002'
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ['@sitepilot/types'],
+  webpack: (config) => {
+    config.resolve.alias.canvas = false
+    return config
+  },
   images: {
     domains: ['localhost'],
   },
