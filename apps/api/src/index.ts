@@ -23,6 +23,7 @@ import organizationRoutes from './routes/organization'
 import paymentRoutes from './routes/payments'
 import receiptRoutes from './routes/receipts'
 import fieldReportRoutes from './routes/field-report'
+import fileRoutes from './routes/files'
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   console.error('FATAL: JWT_SECRET is not set in production')
@@ -92,6 +93,7 @@ async function start() {
   await fastify.register(paymentRoutes, { prefix: '/api' })
   await fastify.register(receiptRoutes, { prefix: '/api' })
   await fastify.register(fieldReportRoutes, { prefix: '/api' })
+  await fastify.register(fileRoutes, { prefix: '/api' })
 
   fastify.setErrorHandler((error, _request, reply) => {
     fastify.log.error(error)

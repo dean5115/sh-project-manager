@@ -1,3 +1,13 @@
+// R2 files live on an external domain that blocks cross-origin fetch — route them
+// through the API's /api/files proxy so pdfjs can read them same-origin.
+function sameOriginUrl(url: string): string {
+  if (url.startsWith('/') || (typeof window !== 'undefined' && url.startsWith(window.location.origin))) {
+    return url
+  }
+  const filename = url.split('/').pop() || ''
+  return `/api/files/${filename}`
+}
+
 export async function generateAnnotatedPlanImage(
   planUrl: string,
   pin: { x: number; y: number }
@@ -7,7 +17,7 @@ export async function generateAnnotatedPlanImage(
     // Worker is copied to /public at build time (see next.config.js) — same origin, no CORS
     pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js'
 
-    const pdf = await pdfjsLib.getDocument(planUrl).promise
+    const pdf = await pdfjsLib.getDocument(sameOriginUrl(planUrl)).promise
     const page = await pdf.getPage(1)
 
     const canvas = document.createElement('canvas')
