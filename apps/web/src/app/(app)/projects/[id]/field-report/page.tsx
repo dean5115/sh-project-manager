@@ -13,6 +13,7 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { PlanPinPicker } from '@/components/pdf/plan-pin-picker'
+import { generateAnnotatedPlanImage } from '@/lib/plan-annotation'
 
 type ReportType = 'DEFECTS' | 'INSPECTION' | 'HANDOVER'
 
@@ -37,6 +38,7 @@ interface Item {
   room: string
   planId?: string
   planName?: string
+  planUrl?: string
   planPin?: { x: number; y: number }
 }
 
@@ -89,7 +91,7 @@ export default function FieldReportPage() {
     }
   }
 
-  function doAddItem(planData?: { planId: string; planName: string; planPin: { x: number; y: number } | null }) {
+  function doAddItem(planData?: { planId: string; planName: string; planUrl: string; planPin: { x: number; y: number } | null }) {
     if (!pendingPhoto) return
     setItems((prev) => [{
       id: `${Date.now()}-${Math.random()}`,
@@ -99,6 +101,7 @@ export default function FieldReportPage() {
       room: pendingRoom,
       planId: planData?.planId,
       planName: planData?.planName,
+      planUrl: planData?.planUrl,
       planPin: planData?.planPin ?? undefined,
     }, ...prev])
     setPendingPhoto(null)
@@ -129,11 +132,23 @@ export default function FieldReportPage() {
             severity: 'MEDIUM',
             status: 'OPEN',
           })
+          // העלאת תמונת השטח
           const fd = new FormData()
           fd.append('file', item.file)
           fd.append('defectBeforeId', defectRes.data.id)
           fd.append('projectId', projectId)
           await api.upload('/photos/upload', fd)
+          // אם סומן מיקום על תוכנית — מייצרים תמונה מסומנת ומעלים אותה גם כן
+          if (item.planUrl && item.planPin) {
+            const blob = await generateAnnotatedPlanImage(item.planUrl, item.planPin)
+            if (blob) {
+              const planFd = new FormData()
+              planFd.append('file', new File([blob], 'plan-annotation.jpg', { type: 'image/jpeg' }))
+              planFd.append('defectBeforeId', defectRes.data.id)
+              planFd.append('projectId', projectId)
+              await api.upload('/photos/upload', planFd)
+            }
+          }
         }))
         const today = new Date().toISOString().slice(0, 10)
         const reportRes = await api.post<{ data: any }>('/reports/generate', {
@@ -145,15 +160,28 @@ export default function FieldReportPage() {
         })
         setResultReport(reportRes.data)
       } else {
-        const uploads = await Promise.all(items.map(async (item) => {
+        const uploads = await Promise.all(items.flatMap(async (item) => {
           const captionParts = [item.room, item.planName ? `תוכנית: ${item.planName}` : '', item.note].filter(Boolean)
           const fd = new FormData()
           fd.append('file', item.file)
           fd.append('projectId', projectId)
           fd.append('caption', captionParts.join(' | '))
           const res = await api.upload<{ data: any }>('/photos/upload', fd)
-          return res.data.id
-        }))
+          const ids: string[] = [res.data.id]
+          // תמונת תוכנית מסומנת — מצורפת אחרי תמונת השטח
+          if (item.planUrl && item.planPin) {
+            const blob = await generateAnnotatedPlanImage(item.planUrl, item.planPin)
+            if (blob) {
+              const planFd = new FormData()
+              planFd.append('file', new File([blob], 'plan-annotation.jpg', { type: 'image/jpeg' }))
+              planFd.append('projectId', projectId)
+              planFd.append('caption', `מיקום על תוכנית: ${item.planName || ''}`)
+              const planRes = await api.upload<{ data: any }>('/photos/upload', planFd)
+              ids.push(planRes.data.id)
+            }
+          }
+          return ids
+        })).then(arr => arr.flat())
         const reportRes = await api.post<{ data: any }>(`/projects/${projectId}/field-report`, {
           type: reportType,
           title: customTitle || undefined,
@@ -436,7 +464,7 @@ export default function FieldReportPage() {
         <PlanPinPicker
           url={activePlan.url}
           planName={activePlan.name}
-          onConfirm={(pin) => doAddItem({ planId: activePlan.id, planName: activePlan.name, planPin: pin })}
+          onConfirm={(pin) => doAddItem({ planId: activePlan.id, planName: activePlan.name, planUrl: activePlan.url, planPin: pin })}
           onBack={() => { setActivePlan(null); setPlanDialogOpen(true) }}
         />
       )}
