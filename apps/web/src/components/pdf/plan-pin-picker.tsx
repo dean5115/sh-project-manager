@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, MapPin } from 'lucide-react'
 
@@ -11,45 +11,8 @@ interface Props {
 }
 
 export function PlanPinPicker({ url, planName, onConfirm, onBack }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const wrapperRef = useRef<HTMLDivElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const [pin, setPin] = useState<{ x: number; y: number } | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const pdfjs = await import('pdfjs-dist')
-        if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-          pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`
-        }
-        const pdf = await pdfjs.getDocument(url).promise
-        if (cancelled) return
-        const page = await pdf.getPage(1)
-        if (cancelled) return
-
-        const canvas = canvasRef.current!
-        const wrapper = wrapperRef.current!
-        const w = wrapper.clientWidth || 320
-        const nativeVp = page.getViewport({ scale: 1 })
-        const scale = w / nativeVp.width
-        const viewport = page.getViewport({ scale })
-        canvas.width = viewport.width
-        canvas.height = viewport.height
-
-        await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
-        if (!cancelled) setLoading(false)
-      } catch {
-        if (!cancelled) {
-          setError('לא ניתן לטעון את התוכנית')
-          setLoading(false)
-        }
-      }
-    })()
-    return () => { cancelled = true }
-  }, [url])
 
   function handleTap(e: React.MouseEvent<HTMLDivElement>) {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -77,30 +40,25 @@ export function PlanPinPicker({ url, planName, onConfirm, onBack }: Props) {
         )}
       </div>
 
-      {/* Canvas */}
-      <div ref={wrapperRef} className="flex-1 overflow-auto bg-gray-100 relative">
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white">
-            <div className="text-center space-y-2">
-              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-sm text-gray-500">טוען תוכנית...</p>
-            </div>
-          </div>
-        )}
-        {error && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <p className="text-sm text-danger">{error}</p>
-          </div>
-        )}
+      {/* PDF + overlay */}
+      <div className="flex-1 relative overflow-hidden">
+        {/* PDF in iframe — pointer-events off so overlay catches clicks */}
+        <iframe
+          src={`${url}#toolbar=0&navpanes=0`}
+          className="absolute inset-0 w-full h-full border-0"
+          style={{ pointerEvents: 'none' }}
+          title={planName}
+        />
 
+        {/* Transparent click-capture overlay */}
         <div
-          className="relative select-none"
-          style={{ cursor: loading ? 'default' : 'crosshair' }}
-          onClick={!loading && !error ? handleTap : undefined}
+          ref={overlayRef}
+          className="absolute inset-0"
+          style={{ cursor: 'crosshair', background: 'transparent' }}
+          onClick={handleTap}
         >
-          <canvas ref={canvasRef} className="block" />
-
-          {pin && !loading && (
+          {/* Pin marker */}
+          {pin && (
             <div
               className="absolute pointer-events-none"
               style={{ left: `${pin.x}%`, top: `${pin.y}%`, transform: 'translate(-50%, -100%)' }}
@@ -116,7 +74,7 @@ export function PlanPinPicker({ url, planName, onConfirm, onBack }: Props) {
 
       {/* Footer */}
       <div className="flex gap-2 px-4 py-3 border-t border-gray-100 bg-white shrink-0">
-        <Button className="flex-1" onClick={() => onConfirm(pin)} disabled={!pin || loading}>
+        <Button className="flex-1" onClick={() => onConfirm(pin)} disabled={!pin}>
           <MapPin size={15} />
           אשר מיקום
         </Button>
