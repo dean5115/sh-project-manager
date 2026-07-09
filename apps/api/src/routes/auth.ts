@@ -93,13 +93,31 @@ export default async function authRoutes(fastify: FastifyInstance) {
     })
   })
 
-  // שלב 1 — בקשת OTP לקבלן
-  fastify.post('/auth/contractor/request-otp', {
-    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  // בדיקת מייל קבלן — מחזיר האם צריך הגדרת סיסמה ראשונה
+  fastify.post('/auth/contractor/check', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     const { email } = z.object({ email: z.string().email() }).parse(request.body)
 
-    // מחפש את הקבלן לפי מייל
+    const contractor = await fastify.prisma.contractor.findFirst({ where: { email } })
+    if (!contractor) {
+      return reply.status(404).send({ error: 'לא נמצא קבלן עם כתובת מייל זו' })
+    }
+
+    const user = await fastify.prisma.user.findUnique({ where: { email } })
+    const hasPassword = !!(user?.passwordHash)
+    return reply.send({ ok: true, needsSetup: !hasPassword })
+  })
+
+  // הגדרת סיסמה ראשונה לקבלן (ללא OTP)
+  fastify.post('/auth/contractor/create-password', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const { email, password } = z.object({
+      email: z.string().email(),
+      password: z.string().min(6),
+    }).parse(request.body)
+
     const contractor = await fastify.prisma.contractor.findFirst({
       where: { email },
       include: { organization: true },
@@ -108,7 +126,48 @@ export default async function authRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: 'לא נמצא קבלן עם כתובת מייל זו' })
     }
 
-    // יוצר OTP
+    // מאפשר יצירת סיסמה רק אם עדיין אין
+    const existingUser = await fastify.prisma.user.findUnique({ where: { email } })
+    if (existingUser?.passwordHash) {
+      return reply.status(400).send({ error: 'כבר הוגדרה סיסמה — השתמש בכניסה רגילה' })
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10)
+    const user = existingUser
+      ? await fastify.prisma.user.update({
+          where: { email },
+          data: { passwordHash },
+          include: { organization: true },
+        })
+      : await fastify.prisma.user.create({
+          data: {
+            email,
+            name: contractor.contactName || contractor.name,
+            role: 'CONTRACTOR',
+            passwordHash,
+            organizationId: contractor.organizationId,
+          },
+          include: { organization: true },
+        })
+
+    const token = await makeToken(user.id, user.organizationId, user.role, user.email)
+    return reply.send({ token, user: sanitizeUser(user), organization: (user as any).organization })
+  })
+
+  // שלב 1 — בקשת OTP לקבלן (נשאר כגיבוי)
+  fastify.post('/auth/contractor/request-otp', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const { email } = z.object({ email: z.string().email() }).parse(request.body)
+
+    const contractor = await fastify.prisma.contractor.findFirst({
+      where: { email },
+      include: { organization: true },
+    })
+    if (!contractor) {
+      return reply.status(404).send({ error: 'לא נמצא קבלן עם כתובת מייל זו' })
+    }
+
     const otp = String(Math.floor(100000 + Math.random() * 900000))
     otpStore.set(email, {
       otp,
@@ -116,7 +175,11 @@ export default async function authRoutes(fastify: FastifyInstance) {
       organizationId: contractor.organizationId,
     })
 
-    await sendOtpEmail(email, otp, contractor.organization.name)
+    try {
+      await sendOtpEmail(email, otp, contractor.organization.name)
+    } catch (err) {
+      console.warn(`[OTP-FALLBACK] Email failed for ${email}. Code: ${otp}`)
+    }
     return reply.send({ ok: true, message: 'קוד נשלח למייל' })
   })
 
@@ -232,6 +295,21 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     const token = await makeToken(user.id, user.organizationId, user.role, user.email)
     return reply.send({ token, user: sanitizeUser(user), organization: user.organization })
+  })
+
+  // endpoint לאדמין בלבד — מחזיר OTP ממתין לקבלן ספציפי
+  fastify.get('/auth/contractor/pending-otp/:email', {
+    preHandler: [require('../middleware/auth').authenticate],
+  }, async (request: any, reply) => {
+    if (!['OWNER', 'MANAGER'].includes(request.user.role)) {
+      return reply.status(403).send({ error: 'אין הרשאה' })
+    }
+    const { email } = request.params as { email: string }
+    const stored = otpStore.get(email)
+    if (!stored || Date.now() > stored.expiresAt) {
+      return reply.send({ otp: null })
+    }
+    return reply.send({ otp: stored.otp, expiresAt: stored.expiresAt })
   })
 
   fastify.get('/auth/me', {
