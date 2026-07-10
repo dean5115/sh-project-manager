@@ -1,5 +1,5 @@
 'use client'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { absoluteUrl } from '@/lib/utils'
 import { AppLayout } from '@/components/layout/app-layout'
@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import {
   Camera, Trash2, ArrowRight, AlertTriangle, Search, ClipboardCheck,
-  Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map, Save,
+  Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map, Save, Pencil,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
@@ -33,7 +33,9 @@ const ROOMS = [
 
 interface Item {
   id: string
-  file: File
+  file?: File           // תמונה חדשה מהמכשיר
+  photoId?: string      // תמונה שכבר קיימת בשרת (מצב עריכה)
+  planPhotoId?: string  // תמונת תוכנית מסומנת שכבר קיימת בשרת
   previewUrl: string
   note: string
   room: string
@@ -46,6 +48,8 @@ interface Item {
 export default function FieldReportPage() {
   const { id: projectId } = useParams<{ id: string }>()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const editReportId = searchParams.get('edit')
 
   useEffect(() => { api.get(`/projects/${projectId}`).catch(() => {}) }, [projectId])
 
@@ -68,7 +72,48 @@ export default function FieldReportPage() {
   const [draftInfo, setDraftInfo] = useState<{ savedAt: number; count: number; type: ReportType } | null>(null)
   const [draftSavedMsg, setDraftSavedMsg] = useState('')
 
+  // edit-mode state
+  const [editLoading, setEditLoading] = useState(false)
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [editingNote, setEditingNote] = useState('')
+
   const typeInfo = TYPES.find((t) => t.value === reportType)
+
+  // מצב עריכה — טעינת דוח קיים מהשרת
+  useEffect(() => {
+    if (!editReportId || !projectId) return
+    setEditLoading(true)
+    api.get<{ data: any }>(`/projects/${projectId}/field-report/${editReportId}`)
+      .then((res) => {
+        const r = res.data
+        setReportType(r.type)
+        setCustomTitle(r.title || '')
+        setItems((r.items ?? []).map((it: any) => ({
+          id: `${Date.now()}-${Math.random()}`,
+          photoId: it.photoId,
+          planPhotoId: it.planPhotoId,
+          previewUrl: absoluteUrl(it.photoUrl),
+          note: it.note || '',
+          room: it.room || '',
+          planId: it.planId,
+          planName: it.planName,
+          planPin: it.planPin,
+        })))
+      })
+      .catch((err: any) => setErrorMsg(err.message || 'טעינת הדוח לעריכה נכשלה'))
+      .finally(() => setEditLoading(false))
+  }, [editReportId, projectId])
+
+  function startEditNote(item: Item) {
+    setEditingItemId(item.id)
+    setEditingNote(item.note)
+  }
+
+  function saveEditNote() {
+    setItems((prev) => prev.map((it) => (it.id === editingItemId ? { ...it, note: editingNote } : it)))
+    setEditingItemId(null)
+    setEditingNote('')
+  }
 
   // בדיקה אם קיימת טיוטה שמורה לפרויקט זה
   useEffect(() => {
@@ -86,16 +131,16 @@ export default function FieldReportPage() {
       reportType,
       customTitle,
       savedAt: Date.now(),
-      items: items.map((it) => ({
+      items: items.filter((it) => it.file).map((it) => ({
         note: it.note,
         room: it.room,
         planId: it.planId,
         planName: it.planName,
         planUrl: it.planUrl,
         planPin: it.planPin,
-        fileName: it.file.name || 'photo.jpg',
-        fileType: it.file.type || 'image/jpeg',
-        blob: it.file,
+        fileName: it.file!.name || 'photo.jpg',
+        fileType: it.file!.type || 'image/jpeg',
+        blob: it.file!,
       })),
     }
     try {
@@ -189,6 +234,7 @@ export default function FieldReportPage() {
     try {
       if (reportType === 'DEFECTS') {
         await Promise.all(items.map(async (item) => {
+          if (!item.file) return
           const locationParts = [item.room, item.planName ? `תוכנית: ${item.planName}` : ''].filter(Boolean)
           const prefix = locationParts.length ? `[${locationParts.join(' | ')}] ` : ''
           const defectRes = await api.post<{ data: any }>(`/projects/${projectId}/defects`, {
@@ -227,32 +273,51 @@ export default function FieldReportPage() {
         setResultReport(reportRes.data)
       } else {
         const reportItems = await Promise.all(items.map(async (item) => {
-          const captionParts = [item.room, item.planName ? `תוכנית: ${item.planName}` : '', item.note].filter(Boolean)
-          const fd = new FormData()
-          fd.append('file', item.file)
-          fd.append('projectId', projectId)
-          fd.append('caption', captionParts.join(' | '))
-          const res = await api.upload<{ data: any }>('/photos/upload', fd)
-          // תמונת תוכנית מסומנת — מוצמדת לאותו ממצא ולא נספרת בנפרד
-          let planPhotoId: string | undefined
-          if (item.planUrl && item.planPin) {
-            const blob = await generateAnnotatedPlanImage(item.planUrl, item.planPin)
-            if (blob) {
-              const planFd = new FormData()
-              planFd.append('file', new File([blob], 'plan-annotation.jpg', { type: 'image/jpeg' }))
-              planFd.append('projectId', projectId)
-              planFd.append('caption', `מיקום על תוכנית: ${item.planName || ''}`)
-              const planRes = await api.upload<{ data: any }>('/photos/upload', planFd)
-              planPhotoId = planRes.data.id
+          // תמונה קיימת בשרת (מצב עריכה) — אין צורך להעלות שוב
+          let photoId = item.photoId
+          let planPhotoId = item.planPhotoId
+          if (!photoId && item.file) {
+            const captionParts = [item.room, item.planName ? `תוכנית: ${item.planName}` : '', item.note].filter(Boolean)
+            const fd = new FormData()
+            fd.append('file', item.file)
+            fd.append('projectId', projectId)
+            fd.append('caption', captionParts.join(' | '))
+            const res = await api.upload<{ data: any }>('/photos/upload', fd)
+            photoId = res.data.id as string
+            // תמונת תוכנית מסומנת — מוצמדת לאותו ממצא ולא נספרת בנפרד
+            if (item.planUrl && item.planPin) {
+              const blob = await generateAnnotatedPlanImage(item.planUrl, item.planPin)
+              if (blob) {
+                const planFd = new FormData()
+                planFd.append('file', new File([blob], 'plan-annotation.jpg', { type: 'image/jpeg' }))
+                planFd.append('projectId', projectId)
+                planFd.append('caption', `מיקום על תוכנית: ${item.planName || ''}`)
+                const planRes = await api.upload<{ data: any }>('/photos/upload', planFd)
+                planPhotoId = planRes.data.id
+              }
             }
           }
-          return { photoId: res.data.id as string, planPhotoId }
+          return {
+            photoId: photoId!,
+            planPhotoId,
+            note: item.note || undefined,
+            room: item.room || undefined,
+            planId: item.planId,
+            planName: item.planName,
+            planPin: item.planPin,
+          }
         }))
-        const reportRes = await api.post<{ data: any }>(`/projects/${projectId}/field-report`, {
-          type: reportType,
-          title: customTitle || undefined,
-          items: reportItems,
-        })
+        const validItems = reportItems.filter((it) => it.photoId)
+        const reportRes = editReportId
+          ? await api.put<{ data: any }>(`/projects/${projectId}/field-report/${editReportId}`, {
+              title: customTitle || undefined,
+              items: validItems,
+            })
+          : await api.post<{ data: any }>(`/projects/${projectId}/field-report`, {
+              type: reportType,
+              title: customTitle || undefined,
+              items: validItems,
+            })
         setResultReport(reportRes.data)
       }
       // הדוח הופק — מוחקים את הטיוטה השמורה
@@ -290,8 +355,24 @@ export default function FieldReportPage() {
           חזרה לפרויקט
         </Link>
 
+        {/* Edit mode — loading existing report */}
+        {editReportId && editLoading && (
+          <div className="card text-center py-12">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-sm text-gray-500">טוען דוח לעריכה...</p>
+          </div>
+        )}
+        {editReportId && !editLoading && !reportType && errorMsg && (
+          <div className="card text-center py-10 space-y-3">
+            <p className="text-sm text-danger">{errorMsg}</p>
+            <Button variant="outline" size="sm" onClick={() => router.push(`/reports?project=${projectId}`)}>
+              חזרה לדוחות
+            </Button>
+          </div>
+        )}
+
         {/* Step 1: choose type */}
-        {!reportType && !resultReport && (
+        {!editReportId && !reportType && !resultReport && (
           <div className="space-y-3">
             {/* טיוטה שמורה */}
             {draftInfo && (
@@ -337,8 +418,20 @@ export default function FieldReportPage() {
               <div className="flex items-center gap-2">
                 {typeInfo && <typeInfo.icon size={18} className="text-primary" />}
                 <p className="font-semibold text-neutral-dark">{typeInfo?.label}</p>
+                {editReportId && (
+                  <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Pencil size={10} />
+                    עריכה
+                  </span>
+                )}
               </div>
-              <button onClick={resetAll} className="text-xs text-gray-400 hover:text-danger">החלף סוג דוח</button>
+              {editReportId ? (
+                <button onClick={() => router.push(`/reports?project=${projectId}`)} className="text-xs text-gray-400 hover:text-danger">
+                  בטל עריכה
+                </button>
+              ) : (
+                <button onClick={resetAll} className="text-xs text-gray-400 hover:text-danger">החלף סוג דוח</button>
+              )}
             </div>
 
             {/* Capture / pending item */}
@@ -416,27 +509,55 @@ export default function FieldReportPage() {
               <div className="space-y-2">
                 <p className="text-xs font-medium text-gray-500">{items.length} ממצאים תועדו</p>
                 {items.map((item) => (
-                  <div key={item.id} className="card flex items-center gap-3">
-                    <img src={item.previewUrl} className="w-16 h-16 object-cover rounded-lg shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap gap-1 mb-1">
-                        {item.room && (
-                          <span className="text-xs bg-primary-50 text-primary px-2 py-0.5 rounded-full">
-                            {item.room}
-                          </span>
-                        )}
-                        {item.planName && (
-                          <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <MapPin size={10} />
-                            {item.planName}{item.planPin ? ' ✓' : ''}
-                          </span>
+                  <div key={item.id} className="card space-y-2">
+                    <div className="flex items-center gap-3">
+                      <img src={item.previewUrl} className="w-16 h-16 object-cover rounded-lg shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap gap-1 mb-1">
+                          {item.room && (
+                            <span className="text-xs bg-primary-50 text-primary px-2 py-0.5 rounded-full">
+                              {item.room}
+                            </span>
+                          )}
+                          {item.planName && (
+                            <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <MapPin size={10} />
+                              {item.planName}{item.planPin ? ' ✓' : ''}
+                            </span>
+                          )}
+                        </div>
+                        {editingItemId !== item.id && (
+                          <p className="text-sm text-gray-600 line-clamp-2">{item.note || '(ללא הערה)'}</p>
                         )}
                       </div>
-                      <p className="text-sm text-gray-600 line-clamp-2">{item.note || '(ללא הערה)'}</p>
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <button onClick={() => startEditNote(item)} className="p-1.5 text-gray-400 hover:text-primary">
+                          <Pencil size={15} />
+                        </button>
+                        <button onClick={() => removeItem(item.id)} className="p-1.5 text-gray-400 hover:text-danger">
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
-                    <button onClick={() => removeItem(item.id)} className="p-1.5 text-gray-400 hover:text-danger shrink-0">
-                      <Trash2 size={15} />
-                    </button>
+                    {editingItemId === item.id && (
+                      <div className="space-y-2">
+                        <Textarea
+                          value={editingNote}
+                          onChange={(e) => setEditingNote(e.target.value)}
+                          placeholder="הערה לממצא..."
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={saveEditNote} className="flex-1">
+                            <Check size={13} />
+                            שמור הערה
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => { setEditingItemId(null); setEditingNote('') }}>
+                            ביטול
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -454,12 +575,14 @@ export default function FieldReportPage() {
                 {draftSavedMsg && <p className="text-sm text-green-600 text-center">{draftSavedMsg}</p>}
                 <Button onClick={finish} loading={finishing} className="w-full" size="lg">
                   <FileText size={16} />
-                  סיום והפקת דוח ({items.length})
+                  {editReportId ? `שמור שינויים והפק מחדש (${items.length})` : `סיום והפקת דוח (${items.length})`}
                 </Button>
-                <Button variant="outline" onClick={saveDraftNow} className="w-full">
-                  <Save size={15} />
-                  שמור טיוטה — המשך מאוחר יותר
-                </Button>
+                {!editReportId && (
+                  <Button variant="outline" onClick={saveDraftNow} className="w-full">
+                    <Save size={15} />
+                    שמור טיוטה — המשך מאוחר יותר
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -470,7 +593,7 @@ export default function FieldReportPage() {
           <div className="space-y-4">
             <div className="card text-center py-6">
               <Check size={36} className="text-green-500 mx-auto mb-2" />
-              <p className="font-semibold text-neutral-dark">הדוח הופק בהצלחה!</p>
+              <p className="font-semibold text-neutral-dark">{editReportId ? 'הדוח עודכן בהצלחה!' : 'הדוח הופק בהצלחה!'}</p>
               <p className="text-sm text-gray-500 mt-1">{resultReport.title}</p>
             </div>
 
@@ -501,7 +624,9 @@ export default function FieldReportPage() {
               <FileText size={16} />
               ראה בדוחות הפרויקט
             </Button>
-            <Button variant="ghost" onClick={resetAll} className="w-full">דוח שטח נוסף</Button>
+            {!editReportId && (
+              <Button variant="ghost" onClick={resetAll} className="w-full">דוח שטח נוסף</Button>
+            )}
           </div>
         )}
       </div>

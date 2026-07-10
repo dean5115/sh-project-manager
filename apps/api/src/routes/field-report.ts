@@ -2,8 +2,18 @@ import { FastifyInstance } from 'fastify'
 import { authenticate } from '../middleware/auth'
 import { generateFieldReportPdf } from '../services/pdf.service'
 import { getOrgBranding } from '../services/branding'
-import { saveFile } from '../services/storage'
+import { saveFile, deleteFile } from '../services/storage'
 import { z } from 'zod'
+
+const itemSchema = z.object({
+  photoId: z.string(),
+  planPhotoId: z.string().optional(),
+  note: z.string().optional(),
+  room: z.string().optional(),
+  planId: z.string().optional(),
+  planName: z.string().optional(),
+  planPin: z.object({ x: z.number(), y: z.number() }).optional(),
+})
 
 const createSchema = z.object({
   type: z.enum(['INSPECTION', 'HANDOVER']),
@@ -11,14 +21,43 @@ const createSchema = z.object({
   // פורמט ישן — רשימת תמונות שטוחה; נשמר לתאימות לאחור
   photoIds: z.array(z.string()).optional(),
   // פורמט חדש — כל ממצא עם תמונת תוכנית מוצמדת אופציונלית
-  items: z.array(z.object({
-    photoId: z.string(),
-    planPhotoId: z.string().optional(),
-  })).optional(),
+  items: z.array(itemSchema).optional(),
 }).refine((d) => (d.items?.length || d.photoIds?.length), { message: 'נדרשת לפחות תמונה אחת' })
+
+const updateSchema = z.object({
+  title: z.string().optional(),
+  items: z.array(itemSchema).min(1),
+})
+
+type ReqItem = z.infer<typeof itemSchema>
+
+// בונה את שורת המיקום+הערה שמופיעה מתחת לתמונה בדוח
+function itemNote(it: ReqItem, fallbackCaption: string): string {
+  const parts = [it.room, it.planName ? `תוכנית: ${it.planName}` : '', it.note].filter(Boolean)
+  return parts.length ? parts.join(' | ') : fallbackCaption
+}
 
 export default async function fieldReportRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate)
+
+  async function buildPdfItems(projectId: string, reqItems: ReqItem[]) {
+    const allIds = reqItems.flatMap((it) => [it.photoId, it.planPhotoId]).filter((id): id is string => !!id)
+    const photos = await fastify.prisma.photo.findMany({
+      where: { id: { in: allIds }, projectId },
+    })
+    const photoById = new Map(photos.map((p) => [p.id, p]))
+    return {
+      photoById,
+      items: reqItems
+        .map((it) => {
+          const p = photoById.get(it.photoId)
+          if (!p) return null
+          const plan = it.planPhotoId ? photoById.get(it.planPhotoId) : undefined
+          return { photoUrl: p.url, note: itemNote(it, p.caption || ''), planUrl: plan?.url }
+        })
+        .filter((it): it is NonNullable<typeof it> => !!it),
+    }
+  }
 
   fastify.post('/projects/:projectId/field-report', async (request, reply) => {
     const { projectId } = request.params as { projectId: string }
@@ -30,21 +69,8 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     })
     if (!project) return reply.status(404).send({ error: 'Project not found' })
 
-    const reqItems = body.items ?? (body.photoIds ?? []).map((pid) => ({ photoId: pid, planPhotoId: undefined as string | undefined }))
-    const allIds = reqItems.flatMap((it) => [it.photoId, it.planPhotoId]).filter((id): id is string => !!id)
-    const photos = await fastify.prisma.photo.findMany({
-      where: { id: { in: allIds }, projectId },
-    })
-    const photoById = new Map(photos.map((p) => [p.id, p]))
-    const items = reqItems
-      .map((it) => {
-        const p = photoById.get(it.photoId)
-        if (!p) return null
-        const plan = it.planPhotoId ? photoById.get(it.planPhotoId) : undefined
-        return { photoUrl: p.url, note: p.caption || '', planUrl: plan?.url }
-      })
-      .filter((it): it is NonNullable<typeof it> => !!it)
-
+    const reqItems: ReqItem[] = body.items ?? (body.photoIds ?? []).map((pid) => ({ photoId: pid }))
+    const { items } = await buildPdfItems(projectId, reqItems)
     if (!items.length) return reply.status(400).send({ error: 'No valid photos found' })
 
     const branding = await getOrgBranding(fastify.prisma, request.user.organizationId)
@@ -63,9 +89,77 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
         title,
         pdfUrl,
         generatedBy: request.user.userId,
+        sourceItems: reqItems as any,
       },
     })
 
     return reply.status(201).send({ data: report })
+  })
+
+  // שליפת דוח לעריכה — מחזיר את הממצאים המקוריים עם כתובות התמונות
+  fastify.get('/projects/:projectId/field-report/:reportId', async (request, reply) => {
+    const { projectId, reportId } = request.params as { projectId: string; reportId: string }
+    const report = await fastify.prisma.report.findFirst({
+      where: { id: reportId, projectId, project: { organizationId: request.user.organizationId } },
+    })
+    if (!report) return reply.status(404).send({ error: 'Report not found' })
+    if (!report.sourceItems) {
+      return reply.status(400).send({ error: 'דוח זה נוצר לפני תמיכת העריכה ולא ניתן לערוך אותו' })
+    }
+
+    const reqItems = report.sourceItems as unknown as ReqItem[]
+    const allIds = reqItems.flatMap((it) => [it.photoId, it.planPhotoId]).filter((id): id is string => !!id)
+    const photos = await fastify.prisma.photo.findMany({ where: { id: { in: allIds }, projectId } })
+    const photoById = new Map(photos.map((p) => [p.id, p]))
+
+    const items = reqItems
+      .filter((it) => photoById.has(it.photoId))
+      .map((it) => ({
+        ...it,
+        photoUrl: photoById.get(it.photoId)!.url,
+        planPhotoUrl: it.planPhotoId ? photoById.get(it.planPhotoId)?.url : undefined,
+      }))
+
+    return reply.send({
+      data: { id: report.id, type: report.type, title: report.title, items },
+    })
+  })
+
+  // עדכון דוח קיים — הפקה מחדש של ה-PDF עם הממצאים המעודכנים
+  fastify.put('/projects/:projectId/field-report/:reportId', async (request, reply) => {
+    const { projectId, reportId } = request.params as { projectId: string; reportId: string }
+    const body = updateSchema.parse(request.body)
+
+    const report = await fastify.prisma.report.findFirst({
+      where: { id: reportId, projectId, project: { organizationId: request.user.organizationId } },
+    })
+    if (!report) return reply.status(404).send({ error: 'Report not found' })
+
+    const project = await fastify.prisma.project.findFirst({
+      where: { id: projectId },
+      include: { organization: true },
+    })
+
+    const { items } = await buildPdfItems(projectId, body.items)
+    if (!items.length) return reply.status(400).send({ error: 'No valid photos found' })
+
+    const branding = await getOrgBranding(fastify.prisma, request.user.organizationId)
+    const title = body.title || report.title
+    const user = await fastify.prisma.user.findUnique({ where: { id: request.user.userId } })
+
+    const pdfBuffer = await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name })
+
+    const filename = `report-${Date.now()}.pdf`
+    const pdfUrl = await saveFile(pdfBuffer, filename, 'application/pdf')
+
+    // מוחקים את קובץ ה-PDF הישן — הרשומה נשארת עם אותו מזהה
+    if (report.pdfUrl) await deleteFile(report.pdfUrl).catch(() => {})
+
+    const updated = await fastify.prisma.report.update({
+      where: { id: reportId },
+      data: { title, pdfUrl, sourceItems: body.items as any },
+    })
+
+    return reply.send({ data: updated })
   })
 }

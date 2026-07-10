@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
-import { FileText, Download, Plus, CheckCircle2, Trash2 } from 'lucide-react'
+import { FileText, Download, Plus, CheckCircle2, Trash2, Pencil } from 'lucide-react'
+import Link from 'next/link'
 import { formatDate } from '@/lib/utils'
 import { useState } from 'react'
 
@@ -134,6 +135,14 @@ export default function ReportsPage() {
                     <Badge className="bg-primary-50 text-primary shrink-0 hidden sm:inline-flex">
                       {rt?.label}
                     </Badge>
+                    {(report.type === 'INSPECTION' || report.type === 'HANDOVER') && report.sourceItems && (
+                      <Link href={`/projects/${selectedProject}/field-report?edit=${report.id}`}>
+                        <Button variant="outline" size="sm">
+                          <Pencil size={14} />
+                          ערוך
+                        </Button>
+                      </Link>
+                    )}
                     {report.pdfUrl && (
                       <a href={report.pdfUrl} download target="_blank" rel="noreferrer">
                         <Button variant="outline" size="sm">

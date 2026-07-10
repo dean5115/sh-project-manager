@@ -403,6 +403,8 @@ model Report {
   generatedBy String
   generatedByUser User   @relation(fields: [generatedBy], references: [id])
   createdAt   DateTime   @default(now())
+  // מבנה הממצאים של דוח שטח (photoId, note, room, planPin...) — מאפשר עריכה והפקה מחדש
+  sourceItems Json?
 
   @@index([projectId])
 }
