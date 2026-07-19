@@ -32,9 +32,19 @@ async function photoToBase64(url: string | undefined | null): Promise<string | n
   }
 }
 
+// מעבדים תמונה-תמונה ברצף (לא Promise.all) — עיבוד מקבילי של הרבה תמונות
+// מחזיק את כל הבאפרים בזיכרון בו-זמנית ומציף את השרת ה-free tier (512MB).
+async function photosSequential(urls: (string | undefined | null)[]): Promise<(string | null)[]> {
+  const results: (string | null)[] = []
+  for (const url of urls) {
+    results.push(await photoToBase64(url))
+  }
+  return results
+}
+
 async function photoGrid(photos: { url: string }[] | undefined): Promise<string> {
   if (!photos?.length) return ''
-  const imgs = (await Promise.all(photos.map((p) => photoToBase64(p.url)))).filter(Boolean) as string[]
+  const imgs = (await photosSequential(photos.map((p) => p.url))).filter(Boolean) as string[]
   if (!imgs.length) return ''
   return `<div class="photo-grid">${imgs.map((src) => `<img class="photo-thumb" src="${src}" />`).join('')}</div>`
 }
@@ -59,10 +69,24 @@ interface PdfOptions {
 }
 
 let browserPromise: Promise<Browser> | null = null
-function getBrowser(): Promise<Browser> {
-  if (!browserPromise) {
-    browserPromise = puppeteer.launch({ headless: true, args: ['--no-sandbox'] })
+async function getBrowser(): Promise<Browser> {
+  // אם דפדפן קודם קרס (OOM וכו') — browserPromise נשאר מצביע לתהליך מת לצמיתות
+  // עד שהשרת יופעל מחדש; בודקים חיבור ומשגרים דפדפן חדש אם צריך.
+  if (browserPromise) {
+    const existing = await browserPromise.catch(() => null)
+    if (existing?.connected) return existing
+    browserPromise = null
   }
+  browserPromise = puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage', // /dev/shm מוגבל מאוד בשרתים כמו Render — בלי זה Chrome קורס תחת עומס זיכרון
+      '--disable-gpu',
+      '--single-process', // תהליך Chrome יחיד במקום כמה — פחות זיכרון בשרת חלש
+    ],
+  })
   return browserPromise
 }
 
@@ -83,8 +107,11 @@ export async function generatePdf(options: PdfOptions): Promise<Buffer> {
 
   let sectionHtml = ''
 
+  // ברצף ולא במקביל (Promise.all) — עם הרבה פריטים ותמונות, עיבוד בו-זמנית מציף את זיכרון השרת
   if (type === 'DAILY' && data.journals) {
-    const cards = await Promise.all(data.journals.map(async (j: any) => `
+    const cards: string[] = []
+    for (const j of data.journals) {
+      cards.push(`
         <div class="item-card">
           <div class="journal-date">${esc(new Date(j.date).toLocaleDateString('he-IL'))}</div>
           <div class="item-field"><strong>עבודות שבוצעו:</strong> ${esc(j.workDone)}</div>
@@ -93,10 +120,14 @@ export async function generatePdf(options: PdfOptions): Promise<Buffer> {
           ${j.issues ? `<div class="item-field issue"><strong>בעיות:</strong> ${esc(j.issues)}</div>` : ''}
           ${await photoGrid(j.photos)}
         </div>
-      `))
+      `)
+    }
     sectionHtml = `<h2>יומני עבודה</h2>${cards.join('')}`
   } else if (type === 'DEFECTS' && data.defects) {
-    const cards = await Promise.all(data.defects.map(async (d: any, i: number) => `
+    const cards: string[] = []
+    for (let i = 0; i < data.defects.length; i++) {
+      const d = data.defects[i]
+      cards.push(`
         <div class="item-card">
           <div class="item-title">${i + 1}. ${esc(d.title)}
             <span class="badge">${esc(severityLabel(d.severity))}</span>
@@ -109,10 +140,14 @@ export async function generatePdf(options: PdfOptions): Promise<Buffer> {
           ${await photoGrid(d.beforePhotos)}
           ${await photoGrid(d.afterPhotos)}
         </div>
-      `))
+      `)
+    }
     sectionHtml = `<h2>ליקויים (${data.defects.length})</h2>${cards.join('')}`
   } else if (type === 'TASKS' && data.tasks) {
-    const cards = await Promise.all(data.tasks.map(async (t: any, i: number) => `
+    const cards: string[] = []
+    for (let i = 0; i < data.tasks.length; i++) {
+      const t = data.tasks[i]
+      cards.push(`
         <div class="item-card">
           <div class="item-title">${i + 1}. ${esc(t.title)}
             <span class="badge">${esc(priorityLabel(t.priority))}</span>
@@ -123,7 +158,8 @@ export async function generatePdf(options: PdfOptions): Promise<Buffer> {
           ${t.contractor?.name ? `<div class="item-field"><strong>קבלן:</strong> ${esc(t.contractor.name)}</div>` : ''}
           ${await photoGrid(t.photos)}
         </div>
-      `))
+      `)
+    }
     sectionHtml = `<h2>משימות (${data.tasks.length})</h2>${cards.join('')}`
   }
 
@@ -232,10 +268,13 @@ export async function generateFieldReportPdf(options: FieldReportOptions): Promi
   const now = new Date().toLocaleDateString('he-IL')
   const orgName = project.organization?.name || 'SH - Project Manager'
 
-  const itemsHtml = (await Promise.all(items.map(async (item, i) => {
+  // ברצף ולא במקביל — עם 20+ ממצאים, עיבוד כל התמונות בו-זמנית מציף את זיכרון השרת ומקריס אותו
+  const itemsHtmlParts: string[] = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
     const src = await photoToBase64(item.photoUrl)
     const planSrc = item.planUrl ? await photoToBase64(item.planUrl) : null
-    return `
+    itemsHtmlParts.push(`
       <div class="field-item">
         <div class="field-item-num">${i + 1}</div>
         ${src ? `<img class="field-item-photo" src="${src}" />` : ''}
@@ -245,8 +284,9 @@ export async function generateFieldReportPdf(options: FieldReportOptions): Promi
           <img class="field-item-plan" src="${planSrc}" />
         ` : ''}
       </div>
-    `
-  }))).join('')
+    `)
+  }
+  const itemsHtml = itemsHtmlParts.join('')
 
   const html = `
     <!DOCTYPE html>
