@@ -12,7 +12,7 @@ const createSchema = z.object({
   managerId: z.string().optional(),
   startDate: z.string().optional(),
   targetDate: z.string().optional(),
-  status: z.enum(['PLANNING', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED']).optional(),
+  status: z.enum(['TENDER', 'PERMIT', 'PLANNING', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED']).optional(),
   contractAmount: z.number().min(0).optional(),
 })
 

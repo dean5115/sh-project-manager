@@ -65,6 +65,8 @@ model User {
 }
 
 enum ProjectStatus {
+  TENDER
+  PERMIT
   PLANNING
   ACTIVE
   ON_HOLD

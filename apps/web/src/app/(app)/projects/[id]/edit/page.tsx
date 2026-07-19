@@ -91,6 +91,7 @@ export default function EditProjectPage() {
               value={form.status}
               onChange={set('status')}
               options={[
+                { value: 'TENDER', label: 'מכרז' }, { value: 'PERMIT', label: 'היתר' },
                 { value: 'PLANNING', label: 'תכנון' }, { value: 'ACTIVE', label: 'פעיל' },
                 { value: 'ON_HOLD', label: 'מושהה' }, { value: 'COMPLETED', label: 'הושלם' },
                 { value: 'CANCELLED', label: 'בוטל' },

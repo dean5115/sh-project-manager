@@ -1,6 +1,6 @@
 export type Role = 'OWNER' | 'PROJECT_MANAGER' | 'ENGINEER' | 'SUPERVISOR' | 'CONTRACTOR' | 'CLIENT'
 
-export type ProjectStatus = 'PLANNING' | 'ACTIVE' | 'ON_HOLD' | 'COMPLETED' | 'CANCELLED'
+export type ProjectStatus = 'TENDER' | 'PERMIT' | 'PLANNING' | 'ACTIVE' | 'ON_HOLD' | 'COMPLETED' | 'CANCELLED'
 export type TaskStatus = 'OPEN' | 'IN_PROGRESS' | 'PENDING_APPROVAL' | 'DONE' | 'CANCELLED'
 export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'FIXED' | 'VERIFIED' | 'CLOSED'
 export type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'

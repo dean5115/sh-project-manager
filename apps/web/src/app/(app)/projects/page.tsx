@@ -11,9 +11,9 @@ import Link from 'next/link'
 import { useState } from 'react'
 import type { Project } from '@sitepilot/types'
 
-const STATUS_OPTIONS = ['', 'PLANNING', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED']
+const STATUS_OPTIONS = ['', 'TENDER', 'PERMIT', 'PLANNING', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED']
 const STATUS_OPT_LABELS: Record<string, string> = {
-  '': 'כל הסטטוסים', PLANNING: 'תכנון', ACTIVE: 'פעיל',
+  '': 'כל הסטטוסים', TENDER: 'מכרז', PERMIT: 'היתר', PLANNING: 'תכנון', ACTIVE: 'פעיל',
   ON_HOLD: 'מושהה', COMPLETED: 'הושלם', CANCELLED: 'בוטל',
 }
 
