@@ -53,6 +53,7 @@ interface Branding {
   primaryColor: string
   logoBase64?: string
   phone?: string
+  contactEmail?: string
   address?: string
   website?: string
   tagline?: string
@@ -106,6 +107,43 @@ function esc(value: unknown): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+
+// נייר מכתבים משותף לכל סוגי הדוחות — לוגו ממורכז בראש העמוד + פס עיטורי בשוליים
+// (Chrome חוזר על position:fixed בכל עמוד בהדפסה, כך שגם מסמכים רב-עמודיים מקבלים אותו לאורך כל הדוח)
+function letterheadStyles(): string {
+  return `
+    .side-bar { position: fixed; top: 0; bottom: 0; left: 0; width: 10px; background: #e9e7e2; }
+    .letterhead { text-align: center; margin-bottom: 20px; }
+    .letterhead-logo { max-width: 150px; max-height: 100px; object-fit: contain; margin: 0 auto; display: block; }
+    .letterhead-name { font-size: 19px; font-weight: bold; letter-spacing: 3px; color: #444; }
+    .letterhead-tagline { font-size: 9px; color: #999; letter-spacing: 1.5px; margin-top: 5px; text-transform: uppercase; }
+    .doc-date { font-size: 11px; color: #888; text-align: left; margin-bottom: 10px; }
+  `
+}
+
+function letterheadHtml(branding: Branding | undefined, orgName: string): string {
+  if (branding?.logoBase64) {
+    return `<div class="side-bar"></div><div class="letterhead"><img class="letterhead-logo" src="${branding.logoBase64}" /></div>`
+  }
+  return `
+    <div class="side-bar"></div>
+    <div class="letterhead">
+      <div class="letterhead-name">${esc(orgName)}</div>
+      ${branding?.tagline ? `<div class="letterhead-tagline">${esc(branding.tagline)}</div>` : ''}
+    </div>
+  `
+}
+
+// כותרת תחתונה אמיתית של Puppeteer — חוזרת בכל עמוד (בניגוד ל-div רגיל שמופיע פעם אחת בסוף המסמך)
+function footerHtml(branding: Branding | undefined, orgName: string, extra?: string): string {
+  const parts = [orgName, branding?.contactEmail, branding?.address, branding?.phone, extra].filter(Boolean) as string[]
+  if (!parts.length) return '<span></span>'
+  return `
+    <div style="width:100%; font-size:8px; color:#999; text-align:center; direction:rtl; font-family:Arial,sans-serif; padding:0 40px;">
+      ${parts.map((p) => esc(p)).join(' &nbsp;|&nbsp; ')}
+    </div>
+  `
 }
 
 export function generatePdf(options: PdfOptions): Promise<Buffer> {
@@ -191,13 +229,7 @@ async function generatePdfImpl(options: PdfOptions): Promise<Buffer> {
           padding: 36px 40px;
           font-size: 13px;
         }
-        .top-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
-        .org-block { display: flex; flex-direction: column; gap: 2px; }
-        .org-logo { width: 70px; max-height: 70px; object-fit: contain; margin-bottom: 4px; }
-        .org-name { font-size: 16px; font-weight: bold; color: ${color}; }
-        .org-tagline { font-size: 11px; color: #777; }
-        .contact-block { text-align: left; font-size: 10px; color: #888; }
-        .contact-block div { margin-bottom: 1px; }
+        ${letterheadStyles()}
         .divider { border: none; border-top: 1px solid ${color}; margin: 10px 0 16px; }
         h1 { font-size: 22px; color: ${color}; margin: 0 0 6px; }
         .project-name { font-size: 15px; font-weight: bold; margin: 0 0 4px; }
@@ -216,23 +248,11 @@ async function generatePdfImpl(options: PdfOptions): Promise<Buffer> {
         td { font-size: 11px; padding: 6px 8px; border-bottom: 1px solid #eee; }
         .signoff { margin-top: 30px; padding-top: 18px; border-top: 1px solid #eee; font-size: 13px; line-height: 1.6; page-break-inside: avoid; }
         .signoff .name { font-weight: bold; color: ${color}; }
-        .footer { text-align: center; font-size: 10px; color: #999; margin-top: 24px; }
       </style>
     </head>
     <body>
-      <div class="top-row">
-        <div class="org-block">
-          ${branding?.logoBase64 ? `<img class="org-logo" src="${branding.logoBase64}" />` : ''}
-          <div class="org-name">${esc(orgName)}</div>
-          ${branding?.tagline ? `<div class="org-tagline">${esc(branding.tagline)}</div>` : ''}
-        </div>
-        <div class="contact-block">
-          <div>${esc(now)}</div>
-          ${branding?.phone ? `<div>${esc(branding.phone)}</div>` : ''}
-          ${branding?.address ? `<div>${esc(branding.address)}</div>` : ''}
-          ${branding?.website ? `<div>${esc(branding.website)}</div>` : ''}
-        </div>
-      </div>
+      ${letterheadHtml(branding, orgName)}
+      <div class="doc-date">${esc(now)}</div>
 
       <h1>${esc(title)}</h1>
       <div class="project-name">פרויקט: ${esc(project.name)}</div>
@@ -246,8 +266,6 @@ async function generatePdfImpl(options: PdfOptions): Promise<Buffer> {
         <div class="name">${esc(generatedByName || orgName)}</div>
         ${generatedByName && branding?.phone ? `<div>${esc(branding.phone)}</div>` : ''}
       </div>
-
-      <div class="footer">הופק על ידי מערכת SH - Project Manager | ${esc(now)}</div>
     </body>
     </html>
   `
@@ -259,7 +277,10 @@ async function generatePdfImpl(options: PdfOptions): Promise<Buffer> {
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
-      margin: { top: '0', bottom: '0', left: '0', right: '0' },
+      margin: { top: '0', bottom: '46px', left: '0', right: '0' },
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: footerHtml(branding, orgName),
     })
     return Buffer.from(pdfBuffer)
   } finally {
@@ -313,11 +334,7 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
       <style>
         * { box-sizing: border-box; }
         body { font-family: 'Arial', 'Segoe UI', sans-serif; direction: rtl; color: #222; margin: 0; padding: 36px 40px; font-size: 13px; }
-        .top-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
-        .org-logo { width: 70px; max-height: 70px; object-fit: contain; margin-bottom: 4px; }
-        .org-name { font-size: 16px; font-weight: bold; color: ${color}; }
-        .org-tagline { font-size: 11px; color: #777; }
-        .contact-block { text-align: left; font-size: 10px; color: #888; }
+        ${letterheadStyles()}
         .divider { border: none; border-top: 1px solid ${color}; margin: 10px 0 16px; }
         h1 { font-size: 22px; color: ${color}; margin: 0 0 6px; }
         .project-name { font-size: 15px; font-weight: bold; margin: 0 0 4px; }
@@ -331,22 +348,11 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
         .summary { font-size: 11px; color: #666; margin-bottom: 14px; }
         .signoff { margin-top: 30px; padding-top: 18px; border-top: 1px solid #eee; font-size: 13px; line-height: 1.6; page-break-inside: avoid; }
         .signoff .name { font-weight: bold; color: ${color}; }
-        .footer { text-align: center; font-size: 10px; color: #999; margin-top: 24px; }
       </style>
     </head>
     <body>
-      <div class="top-row">
-        <div>
-          ${branding?.logoBase64 ? `<img class="org-logo" src="${branding.logoBase64}" />` : ''}
-          <div class="org-name">${esc(orgName)}</div>
-          ${branding?.tagline ? `<div class="org-tagline">${esc(branding.tagline)}</div>` : ''}
-        </div>
-        <div class="contact-block">
-          <div>${esc(now)}</div>
-          ${branding?.phone ? `<div>${esc(branding.phone)}</div>` : ''}
-          ${branding?.address ? `<div>${esc(branding.address)}</div>` : ''}
-        </div>
-      </div>
+      ${letterheadHtml(branding, orgName)}
+      <div class="doc-date">${esc(now)}</div>
 
       <h1>${esc(title)}</h1>
       <div class="project-name">פרויקט: ${esc(project.name)}</div>
@@ -361,8 +367,6 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
         <div class="name">${esc(generatedByName || orgName)}</div>
         ${generatedByName && branding?.phone ? `<div>${esc(branding.phone)}</div>` : ''}
       </div>
-
-      <div class="footer">הופק על ידי מערכת SH - Project Manager | ${esc(now)}</div>
     </body>
     </html>
   `
@@ -374,7 +378,10 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
-      margin: { top: '0', bottom: '0', left: '0', right: '0' },
+      margin: { top: '0', bottom: '46px', left: '0', right: '0' },
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: footerHtml(branding, orgName),
     })
     return Buffer.from(pdfBuffer)
   } finally {
@@ -411,13 +418,10 @@ async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> 
       <style>
         * { box-sizing: border-box; }
         body { font-family: 'Arial', 'Segoe UI', sans-serif; direction: rtl; color: #222; margin: 0; padding: 50px 50px; font-size: 13px; }
-        .top-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
-        .org-logo { width: 70px; max-height: 70px; object-fit: contain; margin-bottom: 4px; }
-        .org-name { font-size: 16px; font-weight: bold; color: ${color}; }
-        .org-meta { font-size: 10px; color: #888; margin-top: 2px; }
-        .receipt-badge { text-align: left; }
-        .receipt-badge .label { font-size: 22px; font-weight: bold; color: ${color}; }
-        .receipt-badge .num { font-size: 13px; color: #555; margin-top: 2px; }
+        ${letterheadStyles()}
+        .receipt-meta { text-align: center; margin-bottom: 8px; }
+        .receipt-meta .label { font-size: 20px; font-weight: bold; color: ${color}; }
+        .receipt-meta .num { font-size: 13px; color: #666; margin-top: 3px; }
         .divider { border: none; border-top: 2px solid ${color}; margin: 16px 0 28px; }
         .row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; font-size: 13px; }
         .row .lbl { color: #888; }
@@ -427,25 +431,13 @@ async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> 
         .amount-box .val { font-size: 26px; font-weight: bold; color: ${color}; }
         .signature { margin-top: 60px; display: flex; justify-content: space-between; }
         .signature .line { width: 200px; border-top: 1px solid #999; text-align: center; font-size: 11px; color: #888; padding-top: 6px; }
-        .footer { text-align: center; font-size: 10px; color: #999; margin-top: 50px; }
       </style>
     </head>
     <body>
-      <div class="top-row">
-        <div>
-          ${branding?.logoBase64 ? `<img class="org-logo" src="${branding.logoBase64}" />` : ''}
-          <div class="org-name">${esc(orgName)}</div>
-          <div class="org-meta">
-            ${branding?.address ? esc(branding.address) + '<br/>' : ''}
-            ${branding?.phone ? esc(branding.phone) + '<br/>' : ''}
-            ${branding?.taxId ? `עוסק מורשה/ח.פ: ${esc(branding.taxId)}` : ''}
-          </div>
-        </div>
-        <div class="receipt-badge">
-          <div class="label">קבלה</div>
-          <div class="num">מספר ${esc(number)}</div>
-          <div class="num">תאריך: ${esc(dateStr)}</div>
-        </div>
+      ${letterheadHtml(branding, orgName)}
+      <div class="receipt-meta">
+        <div class="label">קבלה מס' ${esc(number)}</div>
+        <div class="num">תאריך: ${esc(dateStr)}</div>
       </div>
       <hr class="divider" />
 
@@ -462,8 +454,6 @@ async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> 
         <div class="line">חתימה</div>
         <div class="line">חותמת</div>
       </div>
-
-      <div class="footer">הופק על ידי מערכת SH - Project Manager | ${esc(dateStr)}</div>
     </body>
     </html>
   `
@@ -475,7 +465,10 @@ async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> 
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
-      margin: { top: '0', bottom: '0', left: '0', right: '0' },
+      margin: { top: '0', bottom: '46px', left: '0', right: '0' },
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: footerHtml(branding, orgName, branding?.taxId ? `ע.מ/ח.פ ${branding.taxId}` : undefined),
     })
     return Buffer.from(pdfBuffer)
   } finally {

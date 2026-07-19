@@ -18,6 +18,7 @@ export async function getOrgBranding(prisma: any, organizationId: string) {
     primaryColor: org?.primaryColor || '#1B4F72',
     logoBase64,
     phone: org?.phone || undefined,
+    contactEmail: org?.contactEmail || undefined,
     address: org?.address || undefined,
     website: org?.website || undefined,
     tagline: org?.tagline || undefined,

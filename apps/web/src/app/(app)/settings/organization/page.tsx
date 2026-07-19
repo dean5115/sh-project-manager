@@ -11,7 +11,7 @@ export default function OrganizationSettingsPage() {
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const [form, setForm] = useState({
-    name: '', tagline: '', phone: '', address: '', website: '', primaryColor: '#1B4F72', taxId: '',
+    name: '', tagline: '', phone: '', contactEmail: '', address: '', website: '', primaryColor: '#1B4F72', taxId: '',
   })
   const [saved, setSaved] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -27,6 +27,7 @@ export default function OrganizationSettingsPage() {
         name: org.data.name || '',
         tagline: org.data.tagline || '',
         phone: org.data.phone || '',
+        contactEmail: org.data.contactEmail || '',
         address: org.data.address || '',
         website: org.data.website || '',
         primaryColor: org.data.primaryColor || '#1B4F72',
@@ -112,6 +113,12 @@ export default function OrganizationSettingsPage() {
             placeholder="מקצועיות. אמינות. בנייה."
           />
           <Input label="טלפון" value={form.phone} onChange={set('phone')} placeholder="03-1234567" />
+          <Input
+            label="מייל ליצירת קשר (מוצג בכותרת התחתונה של הדוחות)"
+            value={form.contactEmail}
+            onChange={set('contactEmail')}
+            placeholder="office@example.co.il"
+          />
           <Input label="כתובת משרד" value={form.address} onChange={set('address')} />
           <Input label="אתר אינטרנט" value={form.website} onChange={set('website')} placeholder="www.example.co.il" />
           <Input

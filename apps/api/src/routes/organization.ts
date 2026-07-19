@@ -7,6 +7,7 @@ import path from 'path'
 const updateSchema = z.object({
   name:         z.string().min(1).optional(),
   phone:        z.string().optional(),
+  contactEmail: z.string().optional(),
   address:      z.string().optional(),
   website:      z.string().optional(),
   primaryColor: z.string().optional(),

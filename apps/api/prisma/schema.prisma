@@ -13,6 +13,7 @@ model Organization {
   name         String
   logo         String?
   phone        String?
+  contactEmail String? // מוצג בכותרת תחתונה של דוחות/קבלות — נפרד ממייל ההתחברות של המשתמשים
   address      String?
   website      String?
   primaryColor String?      // hex e.g. "#1B4F72"
