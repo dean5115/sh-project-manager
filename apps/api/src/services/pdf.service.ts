@@ -90,6 +90,15 @@ async function getBrowser(): Promise<Browser> {
   return browserPromise
 }
 
+// מריצים הפקת PDF אחת בכל פעם — שני דוחות שנוצרים בו-זמנית מכפילים את צריכת הזיכרון
+// (כל אחד עם תמונות משלו ב-Chrome), וזה בדיוק מה שהציף את השרת ה-free tier (512MB) בעבר.
+let pdfQueue: Promise<unknown> = Promise.resolve()
+function enqueuePdf<T>(task: () => Promise<T>): Promise<T> {
+  const run = pdfQueue.then(task, task)
+  pdfQueue = run.then(() => {}, () => {})
+  return run
+}
+
 function esc(value: unknown): string {
   if (value === null || value === undefined) return ''
   return String(value)
@@ -99,7 +108,11 @@ function esc(value: unknown): string {
     .replace(/"/g, '&quot;')
 }
 
-export async function generatePdf(options: PdfOptions): Promise<Buffer> {
+export function generatePdf(options: PdfOptions): Promise<Buffer> {
+  return enqueuePdf(() => generatePdfImpl(options))
+}
+
+async function generatePdfImpl(options: PdfOptions): Promise<Buffer> {
   const { title, project, data, type, branding, generatedByName } = options
   const color = branding?.primaryColor || '#1B4F72'
   const now = new Date().toLocaleDateString('he-IL')
@@ -262,7 +275,11 @@ interface FieldReportOptions {
   generatedByName?: string
 }
 
-export async function generateFieldReportPdf(options: FieldReportOptions): Promise<Buffer> {
+export function generateFieldReportPdf(options: FieldReportOptions): Promise<Buffer> {
+  return enqueuePdf(() => generateFieldReportPdfImpl(options))
+}
+
+async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<Buffer> {
   const { title, project, items, branding, generatedByName } = options
   const color = branding?.primaryColor || '#1B4F72'
   const now = new Date().toLocaleDateString('he-IL')
@@ -375,7 +392,11 @@ interface ReceiptOptions {
   branding?: Branding
 }
 
-export async function generateReceiptPdf(options: ReceiptOptions): Promise<Buffer> {
+export function generateReceiptPdf(options: ReceiptOptions): Promise<Buffer> {
+  return enqueuePdf(() => generateReceiptPdfImpl(options))
+}
+
+async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> {
   const { number, amount, clientName, issueDate, project, milestoneTitle, branding } = options
   const color = branding?.primaryColor || '#1B4F72'
   const orgName = project.organization?.name || 'SH - Project Manager'
