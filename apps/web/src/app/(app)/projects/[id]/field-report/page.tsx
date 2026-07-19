@@ -7,12 +7,13 @@ import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import {
   Camera, Trash2, ArrowRight, AlertTriangle, Search, ClipboardCheck,
-  Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map, Save, Pencil,
+  Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map, Save, Pencil, PenLine,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { PlanPinPicker } from '@/components/pdf/plan-pin-picker'
+import { PhotoAnnotator } from '@/components/photo/photo-annotator'
 import { generateAnnotatedPlanImage } from '@/lib/plan-annotation'
 import { saveDraft, loadDraft, deleteDraft, type FieldReportDraft } from '@/lib/field-report-draft'
 
@@ -68,8 +69,14 @@ export default function FieldReportPage() {
   const [planDialogOpen, setPlanDialogOpen] = useState(false)
   const [activePlan, setActivePlan] = useState<{ id: string; name: string; url: string } | null>(null)
 
-  // draft state
-  const [draftInfo, setDraftInfo] = useState<{ savedAt: number; count: number; type: ReportType } | null>(null)
+  // photo drawing state
+  const [photoAnnotatorOpen, setPhotoAnnotatorOpen] = useState(false)
+
+  // draft state — טיוטה יכולה להיות מקומית (במכשיר, כולל תמונות כ-Blob) או מהענן
+  // (רק photoId+photoUrl, כי התמונות כבר הועלו לשרת) — הענן מנצח אם הוא מעודכן יותר
+  const [draftInfo, setDraftInfo] = useState<{ savedAt: number; count: number; type: ReportType; source: 'local' | 'cloud' } | null>(null)
+  const [cloudDraftItems, setCloudDraftItems] = useState<any[] | null>(null)
+  const [cloudDraftTitle, setCloudDraftTitle] = useState('')
   const [draftSavedMsg, setDraftSavedMsg] = useState('')
 
   // edit-mode state
@@ -115,19 +122,31 @@ export default function FieldReportPage() {
     setEditingNote('')
   }
 
-  // בדיקה אם קיימת טיוטה שמורה לפרויקט זה
+  // בדיקה אם קיימת טיוטה שמורה — מקומית (במכשיר) ו/או בענן; בוחרים את המעודכנת מביניהן
   useEffect(() => {
     if (!projectId) return
-    loadDraft(projectId).then((d) => {
-      if (d && d.items.length > 0) {
-        setDraftInfo({ savedAt: d.savedAt, count: d.items.length, type: d.reportType })
+    ;(async () => {
+      const local = await loadDraft(projectId).catch(() => null)
+      const cloudRes = await api.get<{ data: any }>(`/projects/${projectId}/field-report-draft`).catch(() => null)
+      const cloud = cloudRes?.data
+
+      const localTime = local?.items?.length ? local.savedAt : 0
+      const cloudTime = cloud?.items?.length ? new Date(cloud.updatedAt).getTime() : 0
+
+      if (cloudTime > 0 && cloudTime >= localTime) {
+        setCloudDraftItems(cloud.items)
+        setCloudDraftTitle(cloud.title || '')
+        setDraftInfo({ savedAt: cloudTime, count: cloud.items.length, type: cloud.type, source: 'cloud' })
+      } else if (localTime > 0) {
+        setDraftInfo({ savedAt: local!.savedAt, count: local!.items.length, type: local!.reportType, source: 'local' })
       }
-    }).catch(() => {})
+    })()
   }, [projectId])
 
   async function saveDraftNow() {
     if (!reportType) return
-    const draft: FieldReportDraft = {
+    // 1) שמירה מקומית קודם — עובדת תמיד, גם בלי אינטרנט, ומהווה רשת ביטחון
+    const localDraft: FieldReportDraft = {
       reportType,
       customTitle,
       savedAt: Date.now(),
@@ -144,36 +163,100 @@ export default function FieldReportPage() {
       })),
     }
     try {
-      await saveDraft(projectId, draft)
-      setDraftSavedMsg('הטיוטה נשמרה במכשיר — אפשר לחזור אליה מאוחר יותר')
-      setTimeout(() => setDraftSavedMsg(''), 4000)
+      await saveDraft(projectId, localDraft)
     } catch {
-      setErrorMsg('שמירת הטיוטה נכשלה')
+      setErrorMsg('שמירת הטיוטה במכשיר נכשלה')
+      return
     }
+
+    // 2) ניסיון סנכרון לענן — best effort; בלי קליטה זה נכשל בשקט והשמירה המקומית מספיקה
+    let cloudSynced = false
+    try {
+      const uploaded = await Promise.all(items.map(async (item) => {
+        let photoId = item.photoId
+        if (!photoId && item.file) {
+          const fd = new FormData()
+          fd.append('file', item.file)
+          fd.append('projectId', projectId)
+          const res = await api.upload<{ data: any }>('/photos/upload', fd)
+          photoId = res.data.id
+        }
+        return { itemId: item.id, photoId }
+      }))
+      // מסמנים על ה-items שכבר הועלו כדי שלא יועלו שוב בסיבוב הבא (טיוטה נוספת או סיום)
+      setItems((prev) => prev.map((it) => {
+        const u = uploaded.find((x) => x.itemId === it.id)
+        return u?.photoId && !it.photoId ? { ...it, photoId: u.photoId } : it
+      }))
+      const cloudItems = items
+        .map((it) => {
+          const photoId = it.photoId || uploaded.find((x) => x.itemId === it.id)?.photoId
+          if (!photoId) return null
+          return { photoId, note: it.note || undefined, room: it.room || undefined, planId: it.planId, planName: it.planName, planPin: it.planPin }
+        })
+        .filter((it): it is NonNullable<typeof it> => !!it)
+
+      if (cloudItems.length > 0) {
+        await api.put(`/projects/${projectId}/field-report-draft`, {
+          type: reportType,
+          title: customTitle || undefined,
+          items: cloudItems,
+        })
+        cloudSynced = true
+      }
+    } catch {
+      // אין אינטרנט או שגיאת שרת זמנית — לא קריטי, הטיוטה המקומית היא רשת הביטחון
+    }
+
+    setDraftSavedMsg(cloudSynced
+      ? 'הטיוטה נשמרה במכשיר ובענן — נגישה גם ממחשב אחר'
+      : 'הטיוטה נשמרה במכשיר (בלי קליטה כרגע — תסונכרן לענן אוטומטית כשתהיה)')
+    setTimeout(() => setDraftSavedMsg(''), 5000)
   }
 
   async function resumeDraft() {
-    const d = await loadDraft(projectId)
-    if (!d) return
-    setReportType(d.reportType)
-    setCustomTitle(d.customTitle)
-    setItems(d.items.map((it) => ({
-      id: `${Date.now()}-${Math.random()}`,
-      file: new File([it.blob], it.fileName, { type: it.fileType }),
-      previewUrl: URL.createObjectURL(it.blob),
-      note: it.note,
-      room: it.room,
-      planId: it.planId,
-      planName: it.planName,
-      planUrl: it.planUrl,
-      planPin: it.planPin,
-    })))
+    if (!draftInfo) return
+    if (draftInfo.source === 'cloud' && cloudDraftItems) {
+      setReportType(draftInfo.type)
+      setCustomTitle(cloudDraftTitle)
+      setItems(cloudDraftItems.map((it: any) => ({
+        id: `${Date.now()}-${Math.random()}`,
+        photoId: it.photoId,
+        previewUrl: absoluteUrl(it.photoUrl),
+        note: it.note || '',
+        room: it.room || '',
+        planId: it.planId,
+        planName: it.planName,
+        planPin: it.planPin,
+      })))
+    } else {
+      const d = await loadDraft(projectId)
+      if (!d) return
+      setReportType(d.reportType)
+      setCustomTitle(d.customTitle)
+      setItems(d.items.map((it) => ({
+        id: `${Date.now()}-${Math.random()}`,
+        file: new File([it.blob], it.fileName, { type: it.fileType }),
+        previewUrl: URL.createObjectURL(it.blob),
+        note: it.note,
+        room: it.room,
+        planId: it.planId,
+        planName: it.planName,
+        planUrl: it.planUrl,
+        planPin: it.planPin,
+      })))
+    }
     setDraftInfo(null)
+    setCloudDraftItems(null)
   }
 
   async function discardDraft() {
-    await deleteDraft(projectId)
+    await Promise.all([
+      deleteDraft(projectId),
+      api.delete(`/projects/${projectId}/field-report-draft`).catch(() => {}),
+    ])
     setDraftInfo(null)
+    setCloudDraftItems(null)
   }
 
   // fetch project plans
@@ -204,7 +287,8 @@ export default function FieldReportPage() {
 
   function doAddItem(planData?: { planId: string; planName: string; planUrl: string; planPin: { x: number; y: number } | null }) {
     if (!pendingPhoto) return
-    setItems((prev) => [{
+    // מוסיפים בסוף הרשימה — כך התמונה הראשונה שצולמה מופיעה ראשונה בדוח (סדר כרונולוגי)
+    setItems((prev) => [...prev, {
       id: `${Date.now()}-${Math.random()}`,
       file: pendingPhoto.file,
       previewUrl: pendingPhoto.previewUrl,
@@ -214,7 +298,7 @@ export default function FieldReportPage() {
       planName: planData?.planName,
       planUrl: planData?.planUrl,
       planPin: planData?.planPin ?? undefined,
-    }, ...prev])
+    }])
     setPendingPhoto(null)
     setPendingNote('')
     setPendingRoom('')
@@ -320,8 +404,9 @@ export default function FieldReportPage() {
             })
         setResultReport(reportRes.data)
       }
-      // הדוח הופק — מוחקים את הטיוטה השמורה
+      // הדוח הופק — מוחקים את הטיוטה השמורה (מקומית וגם בענן)
       deleteDraft(projectId).catch(() => {})
+      api.delete(`/projects/${projectId}/field-report-draft`).catch(() => {})
       setDraftInfo(null)
     } catch (err: any) {
       setErrorMsg(err.message || 'שגיאה בהפקת הדוח')
@@ -382,6 +467,9 @@ export default function FieldReportPage() {
                   <p className="text-sm font-semibold text-neutral-dark">
                     יש דוח שמור — {TYPES.find((t) => t.value === draftInfo.type)?.label}
                   </p>
+                  <span className="text-xs bg-white px-2 py-0.5 rounded-full text-gray-500 border border-gray-200">
+                    {draftInfo.source === 'cloud' ? '☁️ מהענן' : '📱 מהמכשיר'}
+                  </span>
                 </div>
                 <p className="text-xs text-gray-500">
                   {draftInfo.count} ממצאים · נשמר ב-{new Date(draftInfo.savedAt).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -437,7 +525,17 @@ export default function FieldReportPage() {
             {/* Capture / pending item */}
             {pendingPhoto ? (
               <div className="card space-y-3">
-                <img src={pendingPhoto.previewUrl} className="w-full max-h-64 object-contain rounded-xl bg-gray-50" />
+                <div className="relative">
+                  <img src={pendingPhoto.previewUrl} className="w-full max-h-64 object-contain rounded-xl bg-gray-50" />
+                  <button
+                    type="button"
+                    onClick={() => setPhotoAnnotatorOpen(true)}
+                    className="absolute bottom-2 left-2 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-medium text-primary shadow flex items-center gap-1 hover:bg-white transition-colors"
+                  >
+                    <PenLine size={13} />
+                    סמן על התמונה
+                  </button>
+                </div>
 
                 {/* בחירת חדר / אזור */}
                 <div>
@@ -683,6 +781,19 @@ export default function FieldReportPage() {
           planName={activePlan.name}
           onConfirm={(pin) => doAddItem({ planId: activePlan.id, planName: activePlan.name, planUrl: activePlan.url, planPin: pin })}
           onBack={() => { setActivePlan(null); setPlanDialogOpen(true) }}
+        />
+      )}
+
+      {/* Full-screen photo annotator — ציור וסימון על התמונה שצולמה */}
+      {photoAnnotatorOpen && pendingPhoto && (
+        <PhotoAnnotator
+          file={pendingPhoto.file}
+          onConfirm={(newFile, newPreviewUrl) => {
+            URL.revokeObjectURL(pendingPhoto.previewUrl)
+            setPendingPhoto({ file: newFile, previewUrl: newPreviewUrl })
+            setPhotoAnnotatorOpen(false)
+          }}
+          onCancel={() => setPhotoAnnotatorOpen(false)}
         />
       )}
     </AppLayout>

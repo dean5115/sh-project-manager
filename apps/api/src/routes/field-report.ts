@@ -29,6 +29,12 @@ const updateSchema = z.object({
   items: z.array(itemSchema).min(1),
 })
 
+const draftUpsertSchema = z.object({
+  type: z.enum(['DEFECTS', 'INSPECTION', 'HANDOVER']),
+  title: z.string().optional(),
+  items: z.array(itemSchema),
+})
+
 type ReqItem = z.infer<typeof itemSchema>
 
 // בונה את שורת המיקום+הערה שמופיעה מתחת לתמונה בדוח
@@ -161,5 +167,50 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     })
 
     return reply.send({ data: updated })
+  })
+
+  // טיוטת דוח שטח בענן — מסונכרנת מהמכשיר כדי שתהיה נגישה גם ממכשיר/מחשב אחר
+  // (למשל אם המכשיר בשטח נשאר ללא קליטה או אבד). טיוטה אחת פעילה למשתמש בכל פרויקט.
+  fastify.get('/projects/:projectId/field-report-draft', async (request, reply) => {
+    const { projectId } = request.params as { projectId: string }
+    const draft = await fastify.prisma.fieldReportDraft.findUnique({
+      where: { projectId_userId: { projectId, userId: request.user.userId } },
+    })
+    if (!draft) return reply.send({ data: null })
+
+    const reqItems = draft.items as unknown as ReqItem[]
+    const photoIds = reqItems.map((it) => it.photoId).filter(Boolean)
+    const photos = await fastify.prisma.photo.findMany({ where: { id: { in: photoIds }, projectId } })
+    const photoById = new Map(photos.map((p) => [p.id, p]))
+    const items = reqItems
+      .filter((it) => photoById.has(it.photoId))
+      .map((it) => ({ ...it, photoUrl: photoById.get(it.photoId)!.url }))
+
+    return reply.send({
+      data: { type: draft.type, title: draft.title, items, updatedAt: draft.updatedAt },
+    })
+  })
+
+  fastify.put('/projects/:projectId/field-report-draft', async (request, reply) => {
+    const { projectId } = request.params as { projectId: string }
+    const body = draftUpsertSchema.parse(request.body)
+
+    const project = await fastify.prisma.project.findFirst({
+      where: { id: projectId, organizationId: request.user.organizationId },
+    })
+    if (!project) return reply.status(404).send({ error: 'Project not found' })
+
+    const draft = await fastify.prisma.fieldReportDraft.upsert({
+      where: { projectId_userId: { projectId, userId: request.user.userId } },
+      create: { projectId, userId: request.user.userId, type: body.type, title: body.title, items: body.items as any },
+      update: { type: body.type, title: body.title, items: body.items as any },
+    })
+    return reply.send({ data: { updatedAt: draft.updatedAt } })
+  })
+
+  fastify.delete('/projects/:projectId/field-report-draft', async (request, reply) => {
+    const { projectId } = request.params as { projectId: string }
+    await fastify.prisma.fieldReportDraft.deleteMany({ where: { projectId, userId: request.user.userId } })
+    return reply.status(204).send()
   })
 }
