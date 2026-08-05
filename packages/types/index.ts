@@ -6,7 +6,8 @@ export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'FIXED' | 'VERIFIED' | 'CLOS
 export type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 export type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 export type DocumentType = 'PLAN' | 'SPEC' | 'APPROVAL' | 'INVOICE' | 'PROTOCOL' | 'REPORT' | 'OTHER'
-export type ReportType = 'DAILY' | 'DEFECTS' | 'TASKS' | 'PROGRESS' | 'HANDOVER' | 'INSPECTION'
+export type ReportType = 'DAILY' | 'DEFECTS' | 'TASKS' | 'PROGRESS' | 'HANDOVER' | 'INSPECTION' | 'HOME_INSPECTION'
+export type StandardSourceType = 'REGULATION' | 'HALAT' | 'STANDARD'
 export type PaymentStatus = 'PENDING' | 'INVOICED' | 'PAID'
 export type DefectCategory =
   | 'STRUCTURE' | 'CONCRETE' | 'IRON' | 'WATERPROOFING' | 'PLUMBING'
@@ -217,6 +218,33 @@ export interface Receipt {
   issueDate: string
   pdfUrl?: string | null
   generatedBy: string
+  createdAt: string
+}
+
+export interface StandardReference {
+  imageUrl: string
+  caption: string
+}
+
+export interface Standard {
+  id: string
+  organizationId: string
+  sourceType: StandardSourceType
+  category?: DefectCategory | null
+  code: string
+  description?: string | null
+  precedenceNote?: string | null
+  references?: StandardReference[] | null
+  createdAt: string
+}
+
+export interface FindingTemplate {
+  id: string
+  organizationId: string
+  title: string
+  category?: DefectCategory | null
+  recommendation: string
+  standardIds: string[]
   createdAt: string
 }
 

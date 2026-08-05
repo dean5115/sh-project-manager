@@ -52,6 +52,11 @@ const REPORT_TYPES = [
   },
 ]
 
+// דוח בדק בית נוצר רק דרך flow "דוח שטח" (לא דרך המודל הידני של הפקת דוח) —
+// לכן לא נכלל ב-REPORT_TYPES עצמו, רק ברשימה הזו לצורך תצוגת אייקון/badge בלבד
+const HOME_INSPECTION_TYPE = { value: 'HOME_INSPECTION', label: 'דוח בדק בית', icon: '🏠' }
+const ALL_REPORT_TYPES = [...REPORT_TYPES, HOME_INSPECTION_TYPE]
+
 export default function ReportsPage() {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -124,7 +129,7 @@ export default function ReportsPage() {
               </div>
             ) : (
               (reports?.data ?? []).map((report: any) => {
-                const rt = REPORT_TYPES.find((t) => t.value === report.type)
+                const rt = ALL_REPORT_TYPES.find((t) => t.value === report.type)
                 return (
                   <div key={report.id} className="card flex items-center gap-3">
                     <span className="text-2xl shrink-0">{rt?.icon || '📄'}</span>
@@ -135,7 +140,7 @@ export default function ReportsPage() {
                     <Badge className="bg-primary-50 text-primary shrink-0 hidden sm:inline-flex">
                       {rt?.label}
                     </Badge>
-                    {(report.type === 'INSPECTION' || report.type === 'HANDOVER') && report.sourceItems && (
+                    {(report.type === 'INSPECTION' || report.type === 'HANDOVER' || report.type === 'HOME_INSPECTION') && report.sourceItems && (
                       <Link href={`/projects/${selectedProject}/field-report?edit=${report.id}`}>
                         <Button variant="outline" size="sm">
                           <Pencil size={14} />

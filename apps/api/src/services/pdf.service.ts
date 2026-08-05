@@ -389,6 +389,206 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
   }
 }
 
+interface StandardRef {
+  sourceType: string
+  code: string
+  precedenceNote?: string
+  references?: { imageUrl: string; caption: string }[]
+}
+
+interface HomeInspectionItem {
+  photoUrl: string
+  title?: string
+  recommendation?: string
+  note?: string
+  room?: string
+  severity?: string
+  extraPhotoUrls?: string[]
+  standards?: StandardRef[]
+}
+
+interface HomeInspectionOptions {
+  title: string
+  project: any
+  items: HomeInspectionItem[]
+  branding?: Branding
+  generatedByName?: string
+}
+
+function sourceTypeLabel(t: string): string {
+  return { REGULATION: 'תקנות התכנון והבניה', HALAT: 'הל"ת', STANDARD: 'תקן' }[t] || 'תקן'
+}
+function sourceTypeColor(t: string): string {
+  return { REGULATION: '#7B241C', HALAT: '#B9770E', STANDARD: '#1B4F72' }[t] || '#555'
+}
+function severityColor(s: string): string {
+  return { LOW: '#94a3b8', MEDIUM: '#f59e0b', HIGH: '#f97316', CRITICAL: '#ef4444' }[s] || '#94a3b8'
+}
+
+export function generateHomeInspectionPdf(options: HomeInspectionOptions): Promise<Buffer> {
+  return enqueuePdf(() => generateHomeInspectionPdfImpl(options))
+}
+
+async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Promise<Buffer> {
+  const { title, project, items, branding, generatedByName } = options
+  const color = branding?.primaryColor || '#1B4F72'
+  const now = new Date().toLocaleDateString('he-IL')
+  const orgName = project.organization?.name || 'SH - Project Manager'
+
+  // קיבוץ לפי חדר (ברירת מחדל "כללי"), לפי סדר הופעה ראשון — Map שומר סדר הכנסה
+  const roomGroups = new Map<string, HomeInspectionItem[]>()
+  for (const item of items) {
+    const room = item.room || 'כללי'
+    if (!roomGroups.has(room)) roomGroups.set(room, [])
+    roomGroups.get(room)!.push(item)
+  }
+
+  const severityCounts: Record<string, number> = { LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 }
+  for (const item of items) {
+    if (item.severity) severityCounts[item.severity] = (severityCounts[item.severity] || 0) + 1
+  }
+  const summaryParts = Object.entries(severityCounts)
+    .filter(([, c]) => c > 0)
+    .map(([sev, c]) => `${severityLabel(sev)}: ${c}`)
+
+  // ברצף ולא במקביל — עם הרבה ממצאים ותמונות (כולל תמונות רפרנס של תקנים), עיבוד בו-זמנית מציף את זיכרון השרת
+  let bodyHtml = ''
+  let roomIndex = 0
+  for (const [room, roomItems] of roomGroups) {
+    roomIndex++
+    bodyHtml += `<h2 class="room-heading">${roomIndex}. ${esc(room)}</h2>`
+    let findingIndex = 0
+    for (const item of roomItems) {
+      findingIndex++
+      const num = `${roomIndex}.${findingIndex}`
+
+      const photoUrls = [item.photoUrl, ...(item.extraPhotoUrls ?? [])]
+      const photoSrcs: string[] = []
+      for (const url of photoUrls) {
+        const src = await photoToBase64(url)
+        if (src) photoSrcs.push(src)
+      }
+      const photosHtml = photoSrcs.length
+        ? `<div class="hi-photos">${photoSrcs.map((s) => `<img src="${s}" />`).join('')}</div>`
+        : ''
+
+      let standardsHtml = ''
+      for (const std of item.standards ?? []) {
+        let refsHtml = ''
+        for (const ref of std.references ?? []) {
+          const src = await photoToBase64(ref.imageUrl)
+          if (src) {
+            refsHtml += `<img class="hi-reference-img" src="${src}" /><div class="hi-reference-caption">${esc(ref.caption)}</div>`
+          }
+        }
+        standardsHtml += `
+          <div class="hi-standard-block">
+            <span class="hi-standard-source" style="background:${sourceTypeColor(std.sourceType)}">${esc(sourceTypeLabel(std.sourceType))}</span>
+            <span class="hi-standard-code">${esc(std.code)}</span>
+            ${std.precedenceNote ? `<div class="hi-precedence-note">${esc(std.precedenceNote)}</div>` : ''}
+            ${refsHtml}
+          </div>
+        `
+      }
+
+      bodyHtml += `
+        <div class="hi-finding">
+          <div class="hi-finding-header">
+            <span class="hi-finding-num">${num}</span>
+            <span class="hi-finding-title">${esc(item.title || item.note || '')}</span>
+            ${item.severity ? `<span class="hi-severity" style="background:${severityColor(item.severity)}">${esc(severityLabel(item.severity))}</span>` : ''}
+          </div>
+          <div class="hi-row">
+            <div class="hi-row-label">מיקום</div>
+            <div class="hi-row-value">${esc(room)}</div>
+          </div>
+          ${item.recommendation ? `
+            <div class="hi-row">
+              <div class="hi-row-label">המלצה</div>
+              <div class="hi-row-value">${esc(item.recommendation)}</div>
+            </div>
+          ` : ''}
+          ${photosHtml}
+          ${standardsHtml}
+        </div>
+      `
+    }
+  }
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="he" dir="rtl">
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Arial', 'Segoe UI', sans-serif; direction: rtl; color: #222; margin: 0; padding: 36px 40px; font-size: 13px; }
+        ${letterheadStyles()}
+        .divider { border: none; border-top: 1px solid ${color}; margin: 10px 0 16px; }
+        h1 { font-size: 22px; color: ${color}; margin: 0 0 6px; }
+        .project-name { font-size: 15px; font-weight: bold; margin: 0 0 4px; }
+        .project-address { font-size: 11px; color: #555; margin: 0 0 2px; }
+        .summary { font-size: 11px; color: #666; margin-bottom: 14px; }
+        .room-heading { font-size: 16px; color: ${color}; margin: 22px 0 10px; border-bottom: 2px solid ${color}; padding-bottom: 4px; }
+        .hi-finding { border: 1px solid #eee; border-radius: 10px; padding: 16px; margin-bottom: 16px; page-break-inside: avoid; }
+        .hi-finding-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .hi-finding-num { font-weight: bold; color: ${color}; font-size: 14px; }
+        .hi-finding-title { font-weight: bold; font-size: 14px; flex: 1; }
+        .hi-severity { font-size: 9px; padding: 2px 8px; border-radius: 6px; color: #fff; font-weight: bold; }
+        .hi-row { border-top: 1px solid #f0f0f0; padding: 8px 0; }
+        .hi-row-label { font-weight: bold; font-size: 11px; color: ${color}; margin-bottom: 3px; }
+        .hi-row-value { font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+        .hi-photos { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        .hi-photos img { flex: 1; min-width: 150px; max-height: 220px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd; }
+        .hi-standard-block { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd; }
+        .hi-standard-source { display: inline-block; font-size: 9px; font-weight: bold; padding: 2px 8px; border-radius: 6px; color: #fff; margin-left: 6px; }
+        .hi-standard-code { font-size: 12px; font-weight: bold; }
+        .hi-precedence-note { font-size: 10px; color: #c0392b; margin-top: 4px; font-weight: bold; }
+        .hi-reference-img { width: 100%; max-height: 280px; object-fit: contain; border: 1px solid #eee; border-radius: 6px; margin-top: 8px; background: #f8f9fa; }
+        .hi-reference-caption { font-size: 10px; color: #777; margin-top: 4px; margin-bottom: 6px; text-align: center; }
+        .signoff { margin-top: 30px; padding-top: 18px; border-top: 1px solid #eee; font-size: 13px; line-height: 1.6; page-break-inside: avoid; }
+        .signoff .name { font-weight: bold; color: ${color}; }
+      </style>
+    </head>
+    <body>
+      ${letterheadHtml(branding, orgName)}
+      <div class="doc-date">${esc(now)}</div>
+
+      <h1>${esc(title)}</h1>
+      <div class="project-name">פרויקט: ${esc(project.name)}</div>
+      <div class="project-address">כתובת: ${esc(project.address)}</div>
+      <div class="summary">סך הכל ${items.length} ממצאים${summaryParts.length ? ' — ' + summaryParts.join(' | ') : ''}</div>
+      <hr class="divider" />
+
+      ${bodyHtml}
+
+      <div class="signoff">
+        <div>בברכה,</div>
+        <div class="name">${esc(generatedByName || orgName)}</div>
+        ${generatedByName && branding?.phone ? `<div>${esc(branding.phone)}</div>` : ''}
+      </div>
+    </body>
+    </html>
+  `
+
+  const browser = await getBrowser()
+  const page = await browser.newPage()
+  try {
+    await page.setContent(html, { waitUntil: 'load' })
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '0', bottom: '46px', left: '0', right: '0' },
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: footerHtml(branding, orgName),
+    })
+    return Buffer.from(pdfBuffer)
+  } finally {
+    await page.close()
+  }
+}
+
 interface ReceiptOptions {
   number: number
   amount: number

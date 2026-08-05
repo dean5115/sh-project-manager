@@ -7,6 +7,7 @@ import { useAuthStore } from '@/store/auth'
 import {
   LayoutDashboard, FolderKanban, Users, Bell,
   FileText, LogOut, HardHat, ChevronLeft, X, Settings, Building2, Wallet, Download,
+  BookMarked, ClipboardList,
 } from 'lucide-react'
 
 const NAV = [
@@ -15,6 +16,8 @@ const NAV = [
   { href: '/contractors', label: 'קבלנים', icon: HardHat },
   { href: '/reports', label: 'דוחות', icon: FileText },
   { href: '/payments', label: 'לוח תשלומים', icon: Wallet },
+  { href: '/settings/standards', label: 'תקנים', icon: BookMarked },
+  { href: '/settings/finding-templates', label: 'ממצאים נפוצים', icon: ClipboardList },
   { href: '/settings/users', label: 'משתמשים', icon: Users },
   { href: '/settings/organization', label: 'הגדרות ארגון', icon: Building2 },
 ]

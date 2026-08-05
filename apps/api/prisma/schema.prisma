@@ -24,6 +24,8 @@ model Organization {
   projects     Project[]
   contractors  Contractor[]
   receipts     Receipt[]
+  standards    Standard[]
+  findingTemplates FindingTemplate[]
 }
 
 enum Role {
@@ -396,6 +398,7 @@ enum ReportType {
   PROGRESS
   HANDOVER
   INSPECTION
+  HOME_INSPECTION
 }
 
 model Report {
@@ -430,4 +433,43 @@ model FieldReportDraft {
   createdAt DateTime   @default(now())
 
   @@unique([projectId, userId])
+}
+
+// היררכיית מקורות בבדק בית: תקנות התכנון והבניה גוברות על הכל; הל"ת גובר על תקן (ת"י)
+// בכל נושא של מרחבי שימוש; תקן הוא המקור הכללי. sourceType קובע זאת לכל רשומה.
+enum StandardSourceType {
+  REGULATION // תקנות התכנון והבניה
+  HALAT      // הל"ת
+  STANDARD   // תקן (ת"י)
+}
+
+// ספריית תקנים/תקנות שהמשתמש בונה ומתחזק בעצמו — לא ממולא מראש ע"י המערכת,
+// כדי שלא ייכנס מספר תקן שגוי למסמך מקצועי-משפטי.
+model Standard {
+  id             String             @id @default(cuid())
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sourceType     StandardSourceType
+  category       DefectCategory?    // null = "כללי"; לסינון/אוטוקומפליט בלבד, לא מודפס
+  code           String             // "תקן 5044 חלק 2 שנת 2003 סעיף 3.3.1"
+  description    String?
+  precedenceNote String?            // הערת עדיפות/חריגה, למשל "בנושא מרחבי שימוש: ראה הל\"ת"
+  references     Json?              // [{ imageUrl, caption }] — סריקות תקן/פסיקה, מוצגות בדוח בדק הבית
+  createdAt      DateTime           @default(now())
+
+  @@index([organizationId])
+}
+
+// תבנית ממצא נפוץ — למילוי אוטומטי (autocomplete) של המלצה + תקנים בעת כתיבת דוח בדק בית
+model FindingTemplate {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  category       DefectCategory?
+  recommendation String
+  standardIds    String[]        @default([])
+  createdAt      DateTime        @default(now())
+
+  @@index([organizationId])
 }

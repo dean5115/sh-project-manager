@@ -13,6 +13,12 @@ function openDb(): Promise<IDBDatabase> {
   })
 }
 
+export interface DraftExtraPhoto {
+  fileName: string
+  fileType: string
+  blob: Blob
+}
+
 export interface DraftItem {
   note: string
   room: string
@@ -23,10 +29,16 @@ export interface DraftItem {
   fileName: string
   fileType: string
   blob: Blob
+  // דוח בדק בית בלבד — אדיטיבי, לא נוגע בשלושת סוגי הדוח האחרים
+  title?: string
+  category?: string
+  severity?: string
+  standardIds?: string[]
+  extraPhotos?: DraftExtraPhoto[]
 }
 
 export interface FieldReportDraft {
-  reportType: 'DEFECTS' | 'INSPECTION' | 'HANDOVER'
+  reportType: 'DEFECTS' | 'INSPECTION' | 'HANDOVER' | 'HOME_INSPECTION'
   customTitle: string
   items: DraftItem[]
   savedAt: number
