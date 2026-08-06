@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { Input, Textarea } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { Plus, BookMarked, Trash2, Pencil, Upload, X, ImageIcon } from 'lucide-react'
+import { Plus, BookMarked, Trash2, Pencil, Upload, X, ImageIcon, FileUp } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { CATEGORY_LABELS } from '@/lib/utils'
 import type { Standard, StandardReference } from '@sitepilot/types'
@@ -41,6 +41,10 @@ export default function StandardsPage() {
   const [form, setForm] = useState(emptyForm)
   const [uploadingRef, setUploadingRef] = useState(false)
   const [pendingCaption, setPendingCaption] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState({ done: 0, total: 0, errors: [] as string[] })
 
   const { data } = useQuery({
     queryKey: ['standards'],
@@ -119,6 +123,35 @@ export default function StandardsPage() {
     setForm((f) => ({ ...f, references: f.references.map((r, i) => (i === idx ? { ...r, caption } : r)) }))
   }
 
+  // ייבוא מהיר — כל שורה: sourceType|category|code|description (category/description אופציונליים)
+  async function runImport() {
+    const lines = importText.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (!lines.length) return
+    setImporting(true)
+    setImportProgress({ done: 0, total: lines.length, errors: [] })
+    const errors: string[] = []
+    for (let i = 0; i < lines.length; i++) {
+      const [sourceType, category, code, description] = lines[i].split('|').map((s) => (s ?? '').trim())
+      if (!sourceType || !code) {
+        errors.push(`שורה ${i + 1}: חסר סוג מקור או קוד`)
+      } else {
+        try {
+          await api.post('/standards', {
+            sourceType,
+            category: category || undefined,
+            code,
+            description: description || undefined,
+          })
+        } catch (err: any) {
+          errors.push(`שורה ${i + 1} (${code}): ${err.message || 'שגיאה'}`)
+        }
+      }
+      setImportProgress({ done: i + 1, total: lines.length, errors: [...errors] })
+    }
+    qc.invalidateQueries({ queryKey: ['standards'] })
+    setImporting(false)
+  }
+
   return (
     <AppLayout title="ספריית תקנים">
       <div className="space-y-4">
@@ -144,10 +177,16 @@ export default function StandardsPage() {
               </button>
             ))}
           </div>
-          <Button size="sm" onClick={openNew}>
-            <Plus size={14} />
-            תקן חדש
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+              <FileUp size={14} />
+              ייבוא מהיר
+            </Button>
+            <Button size="sm" onClick={openNew}>
+              <Plus size={14} />
+              תקן חדש
+            </Button>
+          </div>
         </div>
 
         {standards.length === 0 ? (
@@ -287,6 +326,56 @@ export default function StandardsPage() {
               מחק
             </Button>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>ביטול</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={importOpen}
+        onClose={() => { if (!importing) { setImportOpen(false); setImportText(''); setImportProgress({ done: 0, total: 0, errors: [] }) } }}
+        title="ייבוא מהיר של תקנים"
+        size="lg"
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">
+            שורה אחת לכל תקן, בפורמט: <code className="bg-gray-100 px-1 rounded">STANDARD|קטגוריה|קוד|תיאור</code>
+            {' '}(קטגוריה ותיאור אופציונליים — אפשר להשאיר ריק). סוג מקור: REGULATION / HALAT / STANDARD.
+          </p>
+          <Textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder={'STANDARD|PLUMBING|ת"י 1205 חלק 3|קבועות שרברבות ואבזריהן\nREGULATION||תקנות התכנון והבניה|בקשה להיתר, תנאיו ואגרות'}
+            rows={14}
+            className="font-mono text-xs"
+            disabled={importing}
+          />
+          {importProgress.total > 0 && (
+            <div className="space-y-1">
+              <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-primary h-full transition-all"
+                  style={{ width: `${(importProgress.done / importProgress.total) * 100}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-500">{importProgress.done} / {importProgress.total}</p>
+              {importProgress.errors.length > 0 && (
+                <div className="text-xs text-danger space-y-0.5 max-h-24 overflow-auto">
+                  {importProgress.errors.map((e, i) => <p key={i}>{e}</p>)}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Button onClick={runImport} loading={importing} disabled={!importText.trim()}>
+              ייבא
+            </Button>
+            <Button
+              variant="outline"
+              disabled={importing}
+              onClick={() => { setImportOpen(false); setImportText(''); setImportProgress({ done: 0, total: 0, errors: [] }) }}
+            >
+              {importProgress.done > 0 && importProgress.done === importProgress.total ? 'סגור' : 'ביטול'}
+            </Button>
           </div>
         </div>
       </Modal>
