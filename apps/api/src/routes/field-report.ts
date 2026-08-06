@@ -152,7 +152,9 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     if (!items.length) return reply.status(400).send({ error: 'No valid photos found' })
 
     const branding = await getOrgBranding(fastify.prisma, request.user.organizationId)
-    const title = body.title || `דוח ${DEFAULT_TITLE_BY_TYPE[body.type]} — ${project.name}`
+    const title = body.title || (body.type === 'HOME_INSPECTION'
+      ? `חוות דעת הנדסית - בדק בית — ${project.name}`
+      : `דוח ${DEFAULT_TITLE_BY_TYPE[body.type]} — ${project.name}`)
     const user = await fastify.prisma.user.findUnique({ where: { id: request.user.userId } })
 
     const pdfBuffer = body.type === 'HOME_INSPECTION'
