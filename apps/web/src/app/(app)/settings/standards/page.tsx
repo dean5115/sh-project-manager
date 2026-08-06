@@ -131,7 +131,7 @@ export default function StandardsPage() {
     setImportProgress({ done: 0, total: lines.length, errors: [] })
     const errors: string[] = []
     for (let i = 0; i < lines.length; i++) {
-      const [sourceType, category, code, description] = lines[i].split('|').map((s) => (s ?? '').trim())
+      const [sourceType, category, code, description, precedenceNote] = lines[i].split('|').map((s) => (s ?? '').trim())
       if (!sourceType || !code) {
         errors.push(`שורה ${i + 1}: חסר סוג מקור או קוד`)
       } else {
@@ -141,6 +141,7 @@ export default function StandardsPage() {
             category: category || undefined,
             code,
             description: description || undefined,
+            precedenceNote: precedenceNote || undefined,
           })
         } catch (err: any) {
           errors.push(`שורה ${i + 1} (${code}): ${err.message || 'שגיאה'}`)
@@ -338,13 +339,13 @@ export default function StandardsPage() {
       >
         <div className="space-y-3">
           <p className="text-xs text-gray-500">
-            שורה אחת לכל תקן, בפורמט: <code className="bg-gray-100 px-1 rounded">STANDARD|קטגוריה|קוד|תיאור</code>
-            {' '}(קטגוריה ותיאור אופציונליים — אפשר להשאיר ריק). סוג מקור: REGULATION / HALAT / STANDARD.
+            שורה אחת לכל תקן, בפורמט: <code className="bg-gray-100 px-1 rounded">STANDARD|קטגוריה|קוד|תיאור|הערת עדיפות</code>
+            {' '}(קטגוריה, תיאור והערת עדיפות אופציונליים — אפשר להשאיר ריק). סוג מקור: REGULATION / HALAT / STANDARD.
           </p>
           <Textarea
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
-            placeholder={'STANDARD|PLUMBING|ת"י 1205 חלק 3|קבועות שרברבות ואבזריהן\nREGULATION||תקנות התכנון והבניה|בקשה להיתר, תנאיו ואגרות'}
+            placeholder={'STANDARD|PLUMBING|ת"י 1205 חלק 3|קבועות שרברבות ואבזריהן\nREGULATION||תקנות התכנון והבניה|בקשה להיתר, תנאיו ואגרות|גובר על כל תקן והל"ת'}
             rows={14}
             className="font-mono text-xs"
             disabled={importing}

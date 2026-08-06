@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { Textarea } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { Plus, ClipboardList, Trash2, Pencil, Search } from 'lucide-react'
+import { Plus, ClipboardList, Trash2, Pencil, Search, FileUp } from 'lucide-react'
 import { useState } from 'react'
 import { CATEGORY_LABELS } from '@/lib/utils'
 import type { FindingTemplate, Standard } from '@sitepilot/types'
@@ -30,6 +30,10 @@ export default function FindingTemplatesPage() {
   const [deleteTarget, setDeleteTarget] = useState<FindingTemplate | null>(null)
   const [search, setSearch] = useState('')
   const [form, setForm] = useState(emptyForm)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState({ done: 0, total: 0, errors: [] as string[] })
 
   const { data } = useQuery({
     queryKey: ['finding-templates'],
@@ -91,6 +95,46 @@ export default function FindingTemplatesPage() {
     },
   })
 
+  // ייבוא מהיר — כל שורה: קטגוריה|כותרת|המלצה|קודי תקנים (מופרדים ב-;, מזוהים לפי טקסט הקוד המדויק בספריית התקנים)
+  async function runImport() {
+    const lines = importText.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (!lines.length) return
+    setImporting(true)
+    setImportProgress({ done: 0, total: lines.length, errors: [] })
+    const errors: string[] = []
+    for (let i = 0; i < lines.length; i++) {
+      const [category, title, recommendation, standardCodes] = lines[i].split('|').map((s) => (s ?? '').trim())
+      if (!title || !recommendation) {
+        errors.push(`שורה ${i + 1}: חסרה כותרת או המלצה`)
+      } else {
+        const codes = (standardCodes || '').split(';').map((c) => c.trim()).filter(Boolean)
+        const standardIds: string[] = []
+        const missingCodes: string[] = []
+        for (const code of codes) {
+          const match = standards.find((s) => s.code.trim() === code)
+          if (match) standardIds.push(match.id)
+          else missingCodes.push(code)
+        }
+        if (missingCodes.length) {
+          errors.push(`שורה ${i + 1} (${title}): לא נמצאו תקנים בספרייה: ${missingCodes.join(', ')}`)
+        }
+        try {
+          await api.post('/finding-templates', {
+            title,
+            category: category || undefined,
+            recommendation,
+            standardIds,
+          })
+        } catch (err: any) {
+          errors.push(`שורה ${i + 1} (${title}): ${err.message || 'שגיאה'}`)
+        }
+      }
+      setImportProgress({ done: i + 1, total: lines.length, errors: [...errors] })
+    }
+    qc.invalidateQueries({ queryKey: ['finding-templates'] })
+    setImporting(false)
+  }
+
   return (
     <AppLayout title="ממצאים נפוצים">
       <div className="space-y-4">
@@ -104,10 +148,16 @@ export default function FindingTemplatesPage() {
               className="border border-gray-200 rounded-lg pr-8 pl-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 w-56"
             />
           </div>
-          <Button size="sm" onClick={openNew}>
-            <Plus size={14} />
-            ממצא נפוץ חדש
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+              <FileUp size={14} />
+              ייבוא מהיר
+            </Button>
+            <Button size="sm" onClick={openNew}>
+              <Plus size={14} />
+              ממצא נפוץ חדש
+            </Button>
+          </div>
         </div>
 
         {templates.length === 0 ? (
@@ -216,6 +266,58 @@ export default function FindingTemplatesPage() {
               מחק
             </Button>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>ביטול</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={importOpen}
+        onClose={() => { if (!importing) { setImportOpen(false); setImportText(''); setImportProgress({ done: 0, total: 0, errors: [] }) } }}
+        title="ייבוא מהיר של ממצאים נפוצים"
+        size="lg"
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">
+            שורה אחת לכל ממצא, בפורמט:{' '}
+            <code className="bg-gray-100 px-1 rounded">קטגוריה|כותרת|המלצה|קודי תקנים</code>
+            {' '}(קטגוריה וקודי תקנים אופציונליים — אפשר להשאיר ריק). מספר תקנים מופרדים ב-<code className="bg-gray-100 px-1 rounded">;</code>,
+            {' '}וכל קוד תקן חייב להתאים בדיוק לטקסט הקוד כפי שמופיע ב"ספריית תקנים" (ייבא תקנים לפני ממצאים).
+          </p>
+          <Textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder={'DOOR_ENTRANCE|משקוף דלת כניסה ראשית אינו צבוע כהלכה|יש להסיר את הצבע הלקוי ולחדש צביעה בהתאם לתקן|ת"י 1068\nELECTRICAL_SAFETY_FIXTURES|אין מפסק פחת בלוח החשמל|יש להתקין מפסק פחת בהתאם לתקנות החשמל|תקנות החשמל'}
+            rows={14}
+            className="font-mono text-xs"
+            disabled={importing}
+          />
+          {importProgress.total > 0 && (
+            <div className="space-y-1">
+              <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-primary h-full transition-all"
+                  style={{ width: `${(importProgress.done / importProgress.total) * 100}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-500">{importProgress.done} / {importProgress.total}</p>
+              {importProgress.errors.length > 0 && (
+                <div className="text-xs text-danger space-y-0.5 max-h-24 overflow-auto">
+                  {importProgress.errors.map((e, i) => <p key={i}>{e}</p>)}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Button onClick={runImport} loading={importing} disabled={!importText.trim()}>
+              ייבא
+            </Button>
+            <Button
+              variant="outline"
+              disabled={importing}
+              onClick={() => { setImportOpen(false); setImportText(''); setImportProgress({ done: 0, total: 0, errors: [] }) }}
+            >
+              {importProgress.done > 0 && importProgress.done === importProgress.total ? 'סגור' : 'ביטול'}
+            </Button>
           </div>
         </div>
       </Modal>
