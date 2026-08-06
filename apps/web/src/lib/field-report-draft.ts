@@ -17,6 +17,7 @@ export interface DraftExtraPhoto {
   fileName: string
   fileType: string
   blob: Blob
+  caption?: string
 }
 
 export interface DraftItem {
@@ -34,13 +35,27 @@ export interface DraftItem {
   category?: string
   severity?: string
   standardIds?: string[]
+  photoCaption?: string
+  remark?: string
   extraPhotos?: DraftExtraPhoto[]
+}
+
+export interface DraftMetadata {
+  clientName?: string
+  visitDate?: string
+  propertyType?: string
+  roomsIncluded?: string
+  occupied?: string
+  electricityConnected?: boolean
+  waterConnected?: boolean
+  generalNotes?: string
 }
 
 export interface FieldReportDraft {
   reportType: 'DEFECTS' | 'INSPECTION' | 'HANDOVER' | 'HOME_INSPECTION'
   customTitle: string
   items: DraftItem[]
+  metadata?: DraftMetadata
   savedAt: number
 }
 

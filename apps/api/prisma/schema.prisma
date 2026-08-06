@@ -19,6 +19,15 @@ model Organization {
   primaryColor String?      // hex e.g. "#1B4F72"
   tagline      String?
   taxId        String?      // ע.מ / ח.פ — מוצג בקבלות
+  // דוח בדק בית — פרטי בודק וטקסטים קבועים שחוזרים בכל דוח, ניתנים לעריכה בהגדרות
+  inspectorTitle       String? // "מהנדס אזרחי" — מוצג מתחת לשם בחתימת הדוח
+  inspectorEducation   String? // "אלה פרטי השכלתי"
+  inspectorExperience  String? // "אלה פרטי נסיוני"
+  hiLegalDeclaration   String? // הצהרה משפטית בעמוד הראשון
+  hiLegalBasisList     String? // "חוות הדעת מתבססת על" — רשימת מקורות, שורה לפריט
+  hiMethodology        String? // תיאור ציוד/שיטת בדיקה
+  hiWarrantyExplainer  String? // "ידע כללי עבור הדייר" — הסבר תקופות בדק/אחריות
+  hiAdditionalContent  String? // תוכן חופשי נוסף לפי בחירת המשתמש
   createdAt    DateTime     @default(now())
   users        User[]
   projects     Project[]
@@ -233,6 +242,14 @@ enum DefectCategory {
   METALWORK
   SAFETY
   LANDSCAPING
+  // נוספו עבור דוחות בדק בית — קטגוריות גרנולריות יותר שלא היו מכוסות ע"י הרשימה הכללית לעיל
+  DOOR_ENTRANCE
+  INTERIOR_DOORS_POLYMER
+  CLEANING
+  SAFE_ROOM_METALWORK
+  ACCESSIBILITY_SIGNAGE
+  PLASTER_PAINT_WORK
+  ELECTRICAL_SAFETY_FIXTURES
   OTHER
 }
 
@@ -413,6 +430,8 @@ model Report {
   createdAt   DateTime   @default(now())
   // מבנה הממצאים של דוח שטח (photoId, note, room, planPin...) — מאפשר עריכה והפקה מחדש
   sourceItems Json?
+  // דוח בדק בית בלבד — פרטי מזמין/ביקור/נכס ספציפיים לדוח הזה (clientName, visitDate, propertyType, rooms, occupied, utilities, generalNotes)
+  metadata    Json?
 
   @@index([projectId])
 }
@@ -429,6 +448,7 @@ model FieldReportDraft {
   type      ReportType
   title     String?
   items     Json
+  metadata  Json? // דוח בדק בית בלבד — פרטי מזמין/ביקור/נכס
   updatedAt DateTime   @updatedAt
   createdAt DateTime   @default(now())
 

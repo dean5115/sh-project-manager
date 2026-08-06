@@ -58,6 +58,15 @@ interface Branding {
   website?: string
   tagline?: string
   taxId?: string
+  // דוח בדק בית — פרטי בודק וטקסטים קבועים, נערכים בהגדרות ומודפסים בכל דוח
+  inspectorTitle?: string
+  inspectorEducation?: string
+  inspectorExperience?: string
+  hiLegalDeclaration?: string
+  hiLegalBasisList?: string
+  hiMethodology?: string
+  hiWarrantyExplainer?: string
+  hiAdditionalContent?: string
 }
 
 interface PdfOptions {
@@ -392,19 +401,39 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
 interface StandardRef {
   sourceType: string
   code: string
+  description?: string
   precedenceNote?: string
   references?: { imageUrl: string; caption: string }[]
 }
 
+interface HomeInspectionPhoto {
+  url: string
+  caption?: string
+}
+
 interface HomeInspectionItem {
   photoUrl: string
+  photoCaption?: string
   title?: string
   recommendation?: string
+  remark?: string
   note?: string
   room?: string
+  category?: string
   severity?: string
-  extraPhotoUrls?: string[]
+  extraPhotos?: HomeInspectionPhoto[]
   standards?: StandardRef[]
+}
+
+interface HomeInspectionMetadata {
+  clientName?: string
+  visitDate?: string
+  propertyType?: string
+  roomsIncluded?: string
+  occupied?: string
+  electricityConnected?: boolean
+  waterConnected?: boolean
+  generalNotes?: string
 }
 
 interface HomeInspectionOptions {
@@ -413,6 +442,7 @@ interface HomeInspectionOptions {
   items: HomeInspectionItem[]
   branding?: Branding
   generatedByName?: string
+  metadata?: HomeInspectionMetadata
 }
 
 function sourceTypeLabel(t: string): string {
@@ -424,23 +454,35 @@ function sourceTypeColor(t: string): string {
 function severityColor(s: string): string {
   return { LOW: '#94a3b8', MEDIUM: '#f59e0b', HIGH: '#f97316', CRITICAL: '#ef4444' }[s] || '#94a3b8'
 }
+// טקסט חופשי מהגדרות (הצהרה משפטית, המלצה וכו') — שומרים על שורות חדשות שהמשתמש הזין
+function multiline(text: string): string {
+  return esc(text).replace(/\n/g, '<br/>')
+}
+function metaRow(label: string, value?: string | null): string {
+  if (!value) return ''
+  return `<div class="hi-meta-row"><span class="hi-meta-label">${esc(label)}</span><span class="hi-meta-value">${esc(value)}</span></div>`
+}
 
 export function generateHomeInspectionPdf(options: HomeInspectionOptions): Promise<Buffer> {
   return enqueuePdf(() => generateHomeInspectionPdfImpl(options))
 }
 
 async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Promise<Buffer> {
-  const { title, project, items, branding, generatedByName } = options
+  const { title, project, items, branding, generatedByName, metadata } = options
   const color = branding?.primaryColor || '#1B4F72'
   const now = new Date().toLocaleDateString('he-IL')
   const orgName = project.organization?.name || 'SH - Project Manager'
+  const visitDateStr = metadata?.visitDate
+    ? new Date(metadata.visitDate).toLocaleDateString('he-IL')
+    : undefined
 
-  // קיבוץ לפי חדר (ברירת מחדל "כללי"), לפי סדר הופעה ראשון — Map שומר סדר הכנסה
-  const roomGroups = new Map<string, HomeInspectionItem[]>()
+  // קיבוץ לפי קטגוריה (לא לפי חדר!) — כך גם במסמך המקור: "1. דלת כניסה", "2. ריצוף" וכו',
+  // מיקום/חדר הוא שדה מוצג בתוך כל ממצא ולא מפתח הקיבוץ. ברירת מחדל "אחר", לפי סדר הופעה ראשון.
+  const categoryGroups = new Map<string, HomeInspectionItem[]>()
   for (const item of items) {
-    const room = item.room || 'כללי'
-    if (!roomGroups.has(room)) roomGroups.set(room, [])
-    roomGroups.get(room)!.push(item)
+    const cat = item.category ? categoryLabel(item.category) : 'אחר'
+    if (!categoryGroups.has(cat)) categoryGroups.set(cat, [])
+    categoryGroups.get(cat)!.push(item)
   }
 
   const severityCounts: Record<string, number> = { LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 }
@@ -451,26 +493,40 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
     .filter(([, c]) => c > 0)
     .map(([sev, c]) => `${severityLabel(sev)}: ${c}`)
 
+  // עמוד תוכן עניינים — קטגוריה + כמות ממצאים, לפני תחילת הממצאים עצמם (כמו "רשימת ממצאים" במסמך המקור)
+  const tocRows = [...categoryGroups.entries()]
+    .map(([cat, catItems], i) => `
+      <tr><td class="hi-toc-num">${i + 1}</td><td class="hi-toc-name">${esc(cat)}</td><td class="hi-toc-count">${catItems.length}</td></tr>
+    `).join('')
+
   // ברצף ולא במקביל — עם הרבה ממצאים ותמונות (כולל תמונות רפרנס של תקנים), עיבוד בו-זמנית מציף את זיכרון השרת
   let bodyHtml = ''
-  let roomIndex = 0
-  for (const [room, roomItems] of roomGroups) {
-    roomIndex++
-    bodyHtml += `<h2 class="room-heading">${roomIndex}. ${esc(room)}</h2>`
+  let catIndex = 0
+  for (const [cat, catItems] of categoryGroups) {
+    catIndex++
+    bodyHtml += `<h2 class="cat-heading">${catIndex}. ${esc(cat)}</h2>`
     let findingIndex = 0
-    for (const item of roomItems) {
+    for (const item of catItems) {
       findingIndex++
-      const num = `${roomIndex}.${findingIndex}`
+      const num = `${catIndex}.${findingIndex}`
 
-      const photoUrls = [item.photoUrl, ...(item.extraPhotoUrls ?? [])]
-      const photoSrcs: string[] = []
-      for (const url of photoUrls) {
-        const src = await photoToBase64(url)
-        if (src) photoSrcs.push(src)
+      const photoEntries: HomeInspectionPhoto[] = [
+        { url: item.photoUrl, caption: item.photoCaption },
+        ...(item.extraPhotos ?? []),
+      ]
+      const photoBlocks: string[] = []
+      for (const entry of photoEntries) {
+        const src = await photoToBase64(entry.url)
+        if (src) {
+          photoBlocks.push(`
+            <div class="hi-photo-item">
+              <img src="${src}" />
+              ${entry.caption ? `<div class="hi-photo-caption">${esc(entry.caption)}</div>` : ''}
+            </div>
+          `)
+        }
       }
-      const photosHtml = photoSrcs.length
-        ? `<div class="hi-photos">${photoSrcs.map((s) => `<img src="${s}" />`).join('')}</div>`
-        : ''
+      const photosHtml = photoBlocks.length ? `<div class="hi-photos">${photoBlocks.join('')}</div>` : ''
 
       let standardsHtml = ''
       for (const std of item.standards ?? []) {
@@ -485,11 +541,18 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
           <div class="hi-standard-block">
             <span class="hi-standard-source" style="background:${sourceTypeColor(std.sourceType)}">${esc(sourceTypeLabel(std.sourceType))}</span>
             <span class="hi-standard-code">${esc(std.code)}</span>
+            ${std.description ? `<div class="hi-standard-quote">${multiline(std.description)}</div>` : ''}
             ${std.precedenceNote ? `<div class="hi-precedence-note">${esc(std.precedenceNote)}</div>` : ''}
             ${refsHtml}
           </div>
         `
       }
+
+      const infoRows = [
+        item.room ? `<div class="hi-row"><div class="hi-row-label">מיקום</div><div class="hi-row-value">${esc(item.room)}</div></div>` : '',
+        item.recommendation ? `<div class="hi-row"><div class="hi-row-label">המלצה</div><div class="hi-row-value">${multiline(item.recommendation)}</div></div>` : '',
+        item.remark ? `<div class="hi-row"><div class="hi-row-label">הערה</div><div class="hi-row-value">${multiline(item.remark)}</div></div>` : '',
+      ].join('')
 
       bodyHtml += `
         <div class="hi-finding">
@@ -498,22 +561,67 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
             <span class="hi-finding-title">${esc(item.title || item.note || '')}</span>
             ${item.severity ? `<span class="hi-severity" style="background:${severityColor(item.severity)}">${esc(severityLabel(item.severity))}</span>` : ''}
           </div>
-          <div class="hi-row">
-            <div class="hi-row-label">מיקום</div>
-            <div class="hi-row-value">${esc(room)}</div>
-          </div>
-          ${item.recommendation ? `
-            <div class="hi-row">
-              <div class="hi-row-label">המלצה</div>
-              <div class="hi-row-value">${esc(item.recommendation)}</div>
-            </div>
-          ` : ''}
+          ${infoRows}
           ${photosHtml}
           ${standardsHtml}
         </div>
       `
     }
   }
+
+  // נייר מכתבים + פס עיטורי חוזרים גם בעמודי הפתיח (page-break-after מבטיח שכל בלוק יתחיל בעמוד חדש)
+  const coverHtml = `
+    <div class="page-break">
+      <h1 class="hi-title">${esc(title)}</h1>
+      ${metadata?.clientName ? `<div class="hi-to">לכבוד: ${esc(metadata.clientName)}</div>` : ''}
+      <div class="project-address">כתובת: ${esc(project.address)}</div>
+      ${branding?.hiLegalDeclaration ? `<div class="hi-declaration">${multiline(branding.hiLegalDeclaration)}</div>` : ''}
+      <div class="hi-meta-rows">
+        ${metaRow('שם המזמין', metadata?.clientName)}
+        ${metaRow('תאריך ביקור בנכס', visitDateStr)}
+        ${metaRow('שם הבודק', generatedByName)}
+      </div>
+      ${branding?.inspectorEducation ? `<div class="hi-subheading">אלה פרטי השכלתי</div><div class="hi-block-text">${multiline(branding.inspectorEducation)}</div>` : ''}
+      ${branding?.inspectorExperience ? `<div class="hi-subheading">אלה פרטי נסיוני</div><div class="hi-block-text">${multiline(branding.inspectorExperience)}</div>` : ''}
+      ${branding?.hiLegalBasisList ? `
+        <div class="hi-subheading">חוות הדעת מתבססת על:</div>
+        <ul class="hi-list">${branding.hiLegalBasisList.split('\n').filter(Boolean).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
+      ` : ''}
+    </div>
+  `
+
+  const methodologyHtml = (branding?.hiMethodology || branding?.hiWarrantyExplainer) ? `
+    <div class="page-break">
+      ${branding?.hiMethodology ? `<div class="hi-block-text">${multiline(branding.hiMethodology)}</div>` : ''}
+      ${branding?.hiWarrantyExplainer ? `<div class="hi-subheading">ידע כללי עבור הדייר</div><div class="hi-block-text">${multiline(branding.hiWarrantyExplainer)}</div>` : ''}
+    </div>
+  ` : ''
+
+  const hasPropertyDetails = !!(metadata?.propertyType || metadata?.roomsIncluded || metadata?.occupied
+    || metadata?.electricityConnected !== undefined || metadata?.waterConnected !== undefined || metadata?.generalNotes)
+  const propertyHtml = hasPropertyDetails ? `
+    <div class="page-break">
+      <div class="hi-subheading">תיאור הנכס</div>
+      ${metaRow('סוג הנכס', metadata?.propertyType)}
+      ${metaRow('הנכס כולל', metadata?.roomsIncluded)}
+      ${metaRow('הנכס מאוכלס', metadata?.occupied)}
+      ${metadata?.electricityConnected !== undefined ? metaRow('חיבור לחשמל', metadata.electricityConnected ? 'יש' : 'אין') : ''}
+      ${metadata?.waterConnected !== undefined ? metaRow('חיבור למים', metadata.waterConnected ? 'יש' : 'אין') : ''}
+      ${metadata?.generalNotes ? `<div class="hi-subheading">הערות גורפות לדוח</div><div class="hi-block-text">${multiline(metadata.generalNotes)}</div>` : ''}
+    </div>
+  ` : ''
+
+  const additionalHtml = branding?.hiAdditionalContent
+    ? `<div class="page-break"><div class="hi-block-text">${multiline(branding.hiAdditionalContent)}</div></div>`
+    : ''
+
+  const tocHtml = `
+    <div class="page-break">
+      <div class="summary">סך הכל ${items.length} ממצאים${summaryParts.length ? ' — ' + summaryParts.join(' | ') : ''}</div>
+      <div class="hi-subheading">רשימת ממצאים (${items.length})</div>
+      <table class="hi-toc"><tbody>${tocRows}</tbody></table>
+    </div>
+  `
 
   const html = `
     <!DOCTYPE html>
@@ -524,12 +632,27 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
         * { box-sizing: border-box; }
         body { font-family: 'Arial', 'Segoe UI', sans-serif; direction: rtl; color: #222; margin: 0; padding: 36px 40px; font-size: 13px; }
         ${letterheadStyles()}
+        .page-break { page-break-after: always; break-after: page; }
         .divider { border: none; border-top: 1px solid ${color}; margin: 10px 0 16px; }
         h1 { font-size: 22px; color: ${color}; margin: 0 0 6px; }
+        .hi-title { font-size: 20px; color: ${color}; text-align: center; margin: 10px 0 16px; }
+        .hi-to { font-size: 13px; font-weight: bold; margin-bottom: 6px; }
         .project-name { font-size: 15px; font-weight: bold; margin: 0 0 4px; }
-        .project-address { font-size: 11px; color: #555; margin: 0 0 2px; }
-        .summary { font-size: 11px; color: #666; margin-bottom: 14px; }
-        .room-heading { font-size: 16px; color: ${color}; margin: 22px 0 10px; border-bottom: 2px solid ${color}; padding-bottom: 4px; }
+        .project-address { font-size: 11px; color: #555; margin: 0 0 10px; }
+        .hi-declaration { font-size: 11px; line-height: 1.7; color: #333; margin: 12px 0; text-align: justify; }
+        .hi-meta-rows { margin: 14px 0; }
+        .hi-meta-row { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px solid #f0f0f0; font-size: 12px; }
+        .hi-meta-label { font-weight: bold; color: ${color}; min-width: 130px; }
+        .hi-meta-value { color: #333; }
+        .hi-subheading { font-size: 13px; font-weight: bold; color: ${color}; margin: 16px 0 6px; }
+        .hi-block-text { font-size: 11.5px; line-height: 1.7; color: #333; text-align: justify; }
+        .hi-list { margin: 4px 0; padding-inline-start: 20px; font-size: 11.5px; line-height: 1.8; color: #333; }
+        .summary { font-size: 11px; color: #666; margin-bottom: 10px; }
+        .hi-toc { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        .hi-toc td { font-size: 12px; padding: 7px 8px; border-bottom: 1px solid #f0f0f0; }
+        .hi-toc-num { color: ${color}; font-weight: bold; width: 30px; }
+        .hi-toc-count { text-align: left; color: #888; width: 40px; }
+        .cat-heading { font-size: 16px; color: ${color}; margin: 22px 0 10px; border-bottom: 2px solid ${color}; padding-bottom: 4px; }
         .hi-finding { border: 1px solid #eee; border-radius: 10px; padding: 16px; margin-bottom: 16px; page-break-inside: avoid; }
         .hi-finding-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
         .hi-finding-num { font-weight: bold; color: ${color}; font-size: 14px; }
@@ -539,33 +662,37 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
         .hi-row-label { font-weight: bold; font-size: 11px; color: ${color}; margin-bottom: 3px; }
         .hi-row-value { font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
         .hi-photos { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-        .hi-photos img { flex: 1; min-width: 150px; max-height: 220px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd; }
+        .hi-photo-item { flex: 1; min-width: 150px; }
+        .hi-photo-item img { width: 100%; max-height: 220px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd; display: block; }
+        .hi-photo-caption { font-size: 10px; color: #777; text-align: center; margin-top: 4px; }
         .hi-standard-block { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd; }
         .hi-standard-source { display: inline-block; font-size: 9px; font-weight: bold; padding: 2px 8px; border-radius: 6px; color: #fff; margin-left: 6px; }
         .hi-standard-code { font-size: 12px; font-weight: bold; }
+        .hi-standard-quote { font-size: 11px; color: #555; line-height: 1.6; margin-top: 6px; font-style: italic; }
         .hi-precedence-note { font-size: 10px; color: #c0392b; margin-top: 4px; font-weight: bold; }
         .hi-reference-img { width: 100%; max-height: 280px; object-fit: contain; border: 1px solid #eee; border-radius: 6px; margin-top: 8px; background: #f8f9fa; }
         .hi-reference-caption { font-size: 10px; color: #777; margin-top: 4px; margin-bottom: 6px; text-align: center; }
         .signoff { margin-top: 30px; padding-top: 18px; border-top: 1px solid #eee; font-size: 13px; line-height: 1.6; page-break-inside: avoid; }
         .signoff .name { font-weight: bold; color: ${color}; }
+        .signoff .title { font-size: 12px; color: #666; }
       </style>
     </head>
     <body>
       ${letterheadHtml(branding, orgName)}
       <div class="doc-date">${esc(now)}</div>
 
-      <h1>${esc(title)}</h1>
-      <div class="project-name">פרויקט: ${esc(project.name)}</div>
-      <div class="project-address">כתובת: ${esc(project.address)}</div>
-      <div class="summary">סך הכל ${items.length} ממצאים${summaryParts.length ? ' — ' + summaryParts.join(' | ') : ''}</div>
-      <hr class="divider" />
+      ${coverHtml}
+      ${methodologyHtml}
+      ${propertyHtml}
+      ${additionalHtml}
+      ${tocHtml}
 
       ${bodyHtml}
 
       <div class="signoff">
         <div>בברכה,</div>
         <div class="name">${esc(generatedByName || orgName)}</div>
-        ${generatedByName && branding?.phone ? `<div>${esc(branding.phone)}</div>` : ''}
+        ${branding?.inspectorTitle ? `<div class="title">${esc(branding.inspectorTitle)}</div>` : ''}
       </div>
     </body>
     </html>
@@ -677,7 +804,7 @@ async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> 
 }
 
 function severityLabel(s: string) { return { LOW: 'נמוכה', MEDIUM: 'בינונית', HIGH: 'גבוהה', CRITICAL: 'קריטי' }[s] || s }
-function categoryLabel(c: string) { return { STRUCTURE: 'שלד', CONCRETE: 'בטון', IRON: 'ברזל', WATERPROOFING: 'איטום', PLUMBING: 'אינסטלציה', ELECTRICAL: 'חשמל', HVAC: 'מיזוג', DRYWALL: 'גבס', FLOORING: 'ריצוף', CLADDING: 'חיפוי', PAINT: 'צבע', ALUMINUM: 'אלומיניום', CARPENTRY: 'נגרות', METALWORK: 'מסגרות', SAFETY: 'בטיחות', LANDSCAPING: 'פיתוח', OTHER: 'אחר' }[c] || c }
+function categoryLabel(c: string) { return { STRUCTURE: 'שלד', CONCRETE: 'בטון', IRON: 'ברזל', WATERPROOFING: 'איטום', PLUMBING: 'אינסטלציה', ELECTRICAL: 'חשמל', HVAC: 'מיזוג', DRYWALL: 'גבס', FLOORING: 'ריצוף', CLADDING: 'חיפוי', PAINT: 'צבע', ALUMINUM: 'אלומיניום', CARPENTRY: 'נגרות', METALWORK: 'מסגרות', SAFETY: 'בטיחות', LANDSCAPING: 'פיתוח', DOOR_ENTRANCE: 'דלת כניסה', INTERIOR_DOORS_POLYMER: 'דלתות פנים - פולימריות', CLEANING: 'ניקיון', SAFE_ROOM_METALWORK: 'מסגרות-ממ"ד', ACCESSIBILITY_SIGNAGE: 'נגישות/שילוט/סימון', PLASTER_PAINT_WORK: 'עבודות טיח וצבע', ELECTRICAL_SAFETY_FIXTURES: 'אביזרי חשמל ותקשורת/בטיחות', OTHER: 'אחר' }[c] || c }
 function defectStatusLabel(s: string) { return { OPEN: 'פתוח', IN_PROGRESS: 'בטיפול', FIXED: 'תוקן', VERIFIED: 'אומת', CLOSED: 'סגור' }[s] || s }
 function priorityLabel(p: string) { return { LOW: 'נמוכה', MEDIUM: 'רגילה', HIGH: 'גבוהה', CRITICAL: 'קריטי' }[p] || p }
 function taskStatusLabel(s: string) { return { OPEN: 'פתוח', IN_PROGRESS: 'בביצוע', PENDING_APPROVAL: 'ממתין לאישור', DONE: 'הושלם', CANCELLED: 'בוטל' }[s] || s }

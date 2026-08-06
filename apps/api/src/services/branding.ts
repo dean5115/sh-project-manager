@@ -23,5 +23,14 @@ export async function getOrgBranding(prisma: any, organizationId: string) {
     website: org?.website || undefined,
     tagline: org?.tagline || undefined,
     taxId: org?.taxId || undefined,
+    // דוח בדק בית — פרטי בודק וטקסטים קבועים
+    inspectorTitle: org?.inspectorTitle || undefined,
+    inspectorEducation: org?.inspectorEducation || undefined,
+    inspectorExperience: org?.inspectorExperience || undefined,
+    hiLegalDeclaration: org?.hiLegalDeclaration || undefined,
+    hiLegalBasisList: org?.hiLegalBasisList || undefined,
+    hiMethodology: org?.hiMethodology || undefined,
+    hiWarrantyExplainer: org?.hiWarrantyExplainer || undefined,
+    hiAdditionalContent: org?.hiAdditionalContent || undefined,
   }
 }

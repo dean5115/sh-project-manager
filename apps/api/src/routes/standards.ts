@@ -14,7 +14,9 @@ const createSchema = z.object({
   category: z.preprocess(emptyToUndefined, z.enum([
     'STRUCTURE', 'CONCRETE', 'IRON', 'WATERPROOFING', 'PLUMBING',
     'ELECTRICAL', 'HVAC', 'DRYWALL', 'FLOORING', 'CLADDING',
-    'PAINT', 'ALUMINUM', 'CARPENTRY', 'METALWORK', 'SAFETY', 'LANDSCAPING', 'OTHER',
+    'PAINT', 'ALUMINUM', 'CARPENTRY', 'METALWORK', 'SAFETY', 'LANDSCAPING',
+    'DOOR_ENTRANCE', 'INTERIOR_DOORS_POLYMER', 'CLEANING', 'SAFE_ROOM_METALWORK',
+    'ACCESSIBILITY_SIGNAGE', 'PLASTER_PAINT_WORK', 'ELECTRICAL_SAFETY_FIXTURES', 'OTHER',
   ]).optional()),
   code: z.string().min(1),
   description: z.preprocess(emptyToUndefined, z.string().optional()),

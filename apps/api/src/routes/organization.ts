@@ -13,6 +13,15 @@ const updateSchema = z.object({
   primaryColor: z.string().optional(),
   tagline:      z.string().optional(),
   taxId:        z.string().optional(),
+  // דוח בדק בית — פרטי בודק וטקסטים קבועים
+  inspectorTitle:      z.string().optional(),
+  inspectorEducation:  z.string().optional(),
+  inspectorExperience: z.string().optional(),
+  hiLegalDeclaration:  z.string().optional(),
+  hiLegalBasisList:    z.string().optional(),
+  hiMethodology:       z.string().optional(),
+  hiWarrantyExplainer: z.string().optional(),
+  hiAdditionalContent: z.string().optional(),
 })
 
 export default async function organizationRoutes(fastify: FastifyInstance) {

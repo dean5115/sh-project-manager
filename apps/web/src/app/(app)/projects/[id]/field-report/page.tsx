@@ -54,12 +54,14 @@ interface ExtraPhoto {
   file?: File
   photoId?: string
   previewUrl: string
+  caption?: string
 }
 
 interface Item {
   id: string
   file?: File           // תמונה חדשה מהמכשיר
   photoId?: string      // תמונה שכבר קיימת בשרת (מצב עריכה)
+  photoCaption?: string // כיתוב לתמונה הראשית — דוח בדק בית בלבד
   planPhotoId?: string  // תמונת תוכנית מסומנת שכבר קיימת בשרת
   previewUrl: string
   note: string           // דוח בדק בית: משמש כתוכן "המלצה"
@@ -70,10 +72,26 @@ interface Item {
   planPin?: { x: number; y: number }
   // דוח בדק בית בלבד — אדיטיבי, לא נוגע בשלושת סוגי הדוח האחרים
   title?: string
+  remark?: string
   category?: string
   severity?: string
   standardIds?: string[]
   extraPhotos?: ExtraPhoto[]
+}
+
+interface PropertyDetails {
+  clientName: string
+  visitDate: string
+  propertyType: string
+  roomsIncluded: string
+  occupied: string
+  electricityConnected: boolean | null
+  waterConnected: boolean | null
+  generalNotes: string
+}
+const EMPTY_PROPERTY_DETAILS: PropertyDetails = {
+  clientName: '', visitDate: '', propertyType: '', roomsIncluded: '', occupied: '',
+  electricityConnected: null, waterConnected: null, generalNotes: '',
 }
 
 export default function FieldReportPage() {
@@ -105,6 +123,8 @@ export default function FieldReportPage() {
 
   // דוח בדק בית בלבד — כותרת+auto-complete, קטגוריה/חומרה, תקנים, תמונות נוספות
   const [pendingTitle, setPendingTitle] = useState('')
+  const [pendingRemark, setPendingRemark] = useState('')
+  const [pendingPhotoCaption, setPendingPhotoCaption] = useState('')
   const [pendingCategory, setPendingCategory] = useState('')
   const [pendingSeverity, setPendingSeverity] = useState('')
   const [pendingStandardIds, setPendingStandardIds] = useState<string[]>([])
@@ -116,17 +136,23 @@ export default function FieldReportPage() {
   const [newStandardForm, setNewStandardForm] = useState({ sourceType: 'STANDARD', code: '' })
   const [savingStandard, setSavingStandard] = useState(false)
 
+  // פרטי מזמין/ביקור/נכס — נלכדים פעם אחת לדוח בדק בית, לא לכל ממצא
+  const [propertyDetails, setPropertyDetails] = useState<PropertyDetails>(EMPTY_PROPERTY_DETAILS)
+  const [propertyDetailsOpen, setPropertyDetailsOpen] = useState(false)
+
   // draft state — טיוטה יכולה להיות מקומית (במכשיר, כולל תמונות כ-Blob) או מהענן
   // (רק photoId+photoUrl, כי התמונות כבר הועלו לשרת) — הענן מנצח אם הוא מעודכן יותר
   const [draftInfo, setDraftInfo] = useState<{ savedAt: number; count: number; type: ReportType; source: 'local' | 'cloud' } | null>(null)
   const [cloudDraftItems, setCloudDraftItems] = useState<any[] | null>(null)
   const [cloudDraftTitle, setCloudDraftTitle] = useState('')
+  const [cloudDraftMetadata, setCloudDraftMetadata] = useState<any>(null)
   const [draftSavedMsg, setDraftSavedMsg] = useState('')
 
   // edit-mode state
   const [editLoading, setEditLoading] = useState(false)
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingNote, setEditingNote] = useState('')
+  const [editingRemark, setEditingRemark] = useState('')
 
   const typeInfo = TYPES.find((t) => t.value === reportType)
   const isHomeInspection = reportType === 'HOME_INSPECTION'
@@ -166,6 +192,7 @@ export default function FieldReportPage() {
         setItems((r.items ?? []).map((it: any) => ({
           id: `${Date.now()}-${Math.random()}`,
           photoId: it.photoId,
+          photoCaption: it.photoCaption,
           planPhotoId: it.planPhotoId,
           previewUrl: absoluteUrl(it.photoUrl),
           note: it.note || it.recommendation || '',
@@ -174,11 +201,13 @@ export default function FieldReportPage() {
           planName: it.planName,
           planPin: it.planPin,
           title: it.title,
+          remark: it.remark,
           category: it.category,
           severity: it.severity,
           standardIds: it.standardIds,
-          extraPhotos: (it.extraPhotos ?? []).map((ep: any) => ({ photoId: ep.photoId, previewUrl: absoluteUrl(ep.url) })),
+          extraPhotos: (it.extraPhotos ?? []).map((ep: any) => ({ photoId: ep.photoId, previewUrl: absoluteUrl(ep.url), caption: ep.caption })),
         })))
+        setPropertyDetails(r.metadata ? { ...EMPTY_PROPERTY_DETAILS, ...r.metadata } : EMPTY_PROPERTY_DETAILS)
       })
       .catch((err: any) => setErrorMsg(err.message || 'טעינת הדוח לעריכה נכשלה'))
       .finally(() => setEditLoading(false))
@@ -187,12 +216,14 @@ export default function FieldReportPage() {
   function startEditNote(item: Item) {
     setEditingItemId(item.id)
     setEditingNote(item.note)
+    setEditingRemark(item.remark || '')
   }
 
   function saveEditNote() {
-    setItems((prev) => prev.map((it) => (it.id === editingItemId ? { ...it, note: editingNote } : it)))
+    setItems((prev) => prev.map((it) => (it.id === editingItemId ? { ...it, note: editingNote, remark: isHomeInspection ? editingRemark : it.remark } : it)))
     setEditingItemId(null)
     setEditingNote('')
+    setEditingRemark('')
   }
 
   // בדיקה אם קיימת טיוטה שמורה — מקומית (במכשיר) ו/או בענן; בוחרים את המעודכנת מביניהן
@@ -209,12 +240,27 @@ export default function FieldReportPage() {
       if (cloudTime > 0 && cloudTime >= localTime) {
         setCloudDraftItems(cloud.items)
         setCloudDraftTitle(cloud.title || '')
+        setCloudDraftMetadata(cloud.metadata || null)
         setDraftInfo({ savedAt: cloudTime, count: cloud.items.length, type: cloud.type, source: 'cloud' })
       } else if (localTime > 0) {
         setDraftInfo({ savedAt: local!.savedAt, count: local!.items.length, type: local!.reportType, source: 'local' })
       }
     })()
   }, [projectId])
+
+  function metadataPayload() {
+    if (!isHomeInspection) return undefined
+    return {
+      clientName: propertyDetails.clientName || undefined,
+      visitDate: propertyDetails.visitDate || undefined,
+      propertyType: propertyDetails.propertyType || undefined,
+      roomsIncluded: propertyDetails.roomsIncluded || undefined,
+      occupied: propertyDetails.occupied || undefined,
+      electricityConnected: propertyDetails.electricityConnected ?? undefined,
+      waterConnected: propertyDetails.waterConnected ?? undefined,
+      generalNotes: propertyDetails.generalNotes || undefined,
+    }
+  }
 
   async function saveDraftNow() {
     if (!reportType) return
@@ -223,6 +269,7 @@ export default function FieldReportPage() {
       reportType,
       customTitle,
       savedAt: Date.now(),
+      metadata: metadataPayload(),
       items: items.filter((it) => it.file).map((it) => ({
         note: it.note,
         room: it.room,
@@ -234,12 +281,14 @@ export default function FieldReportPage() {
         fileType: it.file!.type || 'image/jpeg',
         blob: it.file!,
         title: it.title,
+        remark: it.remark,
+        photoCaption: it.photoCaption,
         category: it.category,
         severity: it.severity,
         standardIds: it.standardIds,
         extraPhotos: (it.extraPhotos ?? [])
           .filter((ep) => ep.file)
-          .map((ep) => ({ fileName: ep.file!.name || 'photo.jpg', fileType: ep.file!.type || 'image/jpeg', blob: ep.file! })),
+          .map((ep) => ({ fileName: ep.file!.name || 'photo.jpg', fileType: ep.file!.type || 'image/jpeg', blob: ep.file!, caption: ep.caption })),
       })),
     }
     try {
@@ -291,14 +340,18 @@ export default function FieldReportPage() {
           const u = uploaded.find((x) => x.itemId === it.id)
           const photoId = it.photoId || u?.photoId
           if (!photoId) return null
-          const extraPhotoIds = it.extraPhotos
-            ?.map((ep, i) => ep.photoId || u?.extraPhotoIds?.[i])
-            .filter((id): id is string => !!id)
+          const extraPhotos = it.extraPhotos
+            ?.map((ep, i) => {
+              const id = ep.photoId || u?.extraPhotoIds?.[i]
+              return id ? { photoId: id, caption: ep.caption } : null
+            })
+            .filter((ep): ep is { photoId: string; caption: string | undefined } => !!ep)
           return {
             photoId, note: it.note || undefined, room: it.room || undefined,
             planId: it.planId, planName: it.planName, planPin: it.planPin,
-            title: it.title, category: it.category, severity: it.severity,
-            standardIds: it.standardIds, extraPhotoIds,
+            title: it.title, remark: it.remark, photoCaption: it.photoCaption,
+            category: it.category, severity: it.severity,
+            standardIds: it.standardIds, extraPhotos,
           }
         })
         .filter((it): it is NonNullable<typeof it> => !!it)
@@ -308,6 +361,7 @@ export default function FieldReportPage() {
           type: reportType,
           title: customTitle || undefined,
           items: cloudItems,
+          metadata: metadataPayload(),
         })
         cloudSynced = true
       }
@@ -329,6 +383,7 @@ export default function FieldReportPage() {
       setItems(cloudDraftItems.map((it: any) => ({
         id: `${Date.now()}-${Math.random()}`,
         photoId: it.photoId,
+        photoCaption: it.photoCaption,
         previewUrl: absoluteUrl(it.photoUrl),
         note: it.note || '',
         room: it.room || '',
@@ -336,11 +391,13 @@ export default function FieldReportPage() {
         planName: it.planName,
         planPin: it.planPin,
         title: it.title,
+        remark: it.remark,
         category: it.category,
         severity: it.severity,
         standardIds: it.standardIds,
-        extraPhotos: (it.extraPhotos ?? []).map((ep: any) => ({ photoId: ep.photoId, previewUrl: absoluteUrl(ep.url) })),
+        extraPhotos: (it.extraPhotos ?? []).map((ep: any) => ({ photoId: ep.photoId, previewUrl: absoluteUrl(ep.url), caption: ep.caption })),
       })))
+      setPropertyDetails(cloudDraftMetadata ? { ...EMPTY_PROPERTY_DETAILS, ...cloudDraftMetadata } : EMPTY_PROPERTY_DETAILS)
     } else {
       const d = await loadDraft(projectId)
       if (!d) return
@@ -357,15 +414,20 @@ export default function FieldReportPage() {
         planUrl: it.planUrl,
         planPin: it.planPin,
         title: it.title,
+        remark: it.remark,
+        photoCaption: it.photoCaption,
         category: it.category,
         severity: it.severity,
         standardIds: it.standardIds,
         extraPhotos: (it.extraPhotos ?? []).map((ep) => ({
           file: new File([ep.blob], ep.fileName, { type: ep.fileType }),
           previewUrl: URL.createObjectURL(ep.blob),
+          caption: ep.caption,
         })),
       })))
+      setPropertyDetails(d.metadata ? { ...EMPTY_PROPERTY_DETAILS, ...d.metadata } : EMPTY_PROPERTY_DETAILS)
     }
+    setPropertyDetailsOpen(false)
     setDraftInfo(null)
     setCloudDraftItems(null)
   }
@@ -444,6 +506,10 @@ export default function FieldReportPage() {
     setPendingExtraPhotos((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  function updateExtraPhotoCaption(idx: number, caption: string) {
+    setPendingExtraPhotos((prev) => prev.map((ep, i) => (i === idx ? { ...ep, caption } : ep)))
+  }
+
   function handleAddClick() {
     if (!pendingPhoto) return
     if (plans.length > 0) {
@@ -468,6 +534,8 @@ export default function FieldReportPage() {
       planPin: planData?.planPin ?? undefined,
       ...(isHomeInspection ? {
         title: pendingTitle || undefined,
+        remark: pendingRemark || undefined,
+        photoCaption: pendingPhotoCaption || undefined,
         category: pendingCategory || undefined,
         severity: pendingSeverity || undefined,
         standardIds: pendingStandardIds.length ? pendingStandardIds : undefined,
@@ -487,6 +555,8 @@ export default function FieldReportPage() {
 
     setPendingPhoto(null)
     setPendingNote('')
+    setPendingRemark('')
+    setPendingPhotoCaption('')
     setPendingRoom('')
     setIsCustomRoom(false)
     setPendingTitle('')
@@ -576,31 +646,33 @@ export default function FieldReportPage() {
             }
           }
 
-          // תמונות נוספות (דוח בדק בית) — מעלים רק אלה שעדיין קבצים מקומיים
-          let extraPhotoIds: string[] | undefined
+          // תמונות נוספות (דוח בדק בית) — מעלים רק אלה שעדיין קבצים מקומיים, שומרים כיתוב לכל אחת
+          let extraPhotos: { photoId: string; caption?: string }[] | undefined
           if (item.extraPhotos?.length) {
             const uploaded = await Promise.all(item.extraPhotos.map(async (ep) => {
-              if (ep.photoId) return ep.photoId
+              if (ep.photoId) return { photoId: ep.photoId, caption: ep.caption }
               if (!ep.file) return null
               const fd = new FormData()
               fd.append('file', ep.file)
               fd.append('projectId', projectId)
               const res = await api.upload<{ data: any }>('/photos/upload', fd)
-              return res.data.id as string
+              return { photoId: res.data.id as string, caption: ep.caption }
             }))
-            extraPhotoIds = uploaded.filter((id): id is string => !!id)
+            extraPhotos = uploaded.filter((ep): ep is { photoId: string; caption: string | undefined } => !!ep)
           }
 
           return {
             photoId: photoId!,
+            photoCaption: isHomeInspection ? (item.photoCaption || undefined) : undefined,
             planPhotoId,
             note: isHomeInspection ? undefined : (item.note || undefined),
             recommendation: isHomeInspection ? (item.note || undefined) : undefined,
             title: isHomeInspection ? (item.title || undefined) : undefined,
+            remark: isHomeInspection ? (item.remark || undefined) : undefined,
             category: isHomeInspection ? (item.category || undefined) : undefined,
             severity: isHomeInspection ? (item.severity || undefined) : undefined,
             standardIds: isHomeInspection ? item.standardIds : undefined,
-            extraPhotoIds,
+            extraPhotos,
             room: item.room || undefined,
             planId: item.planId,
             planName: item.planName,
@@ -612,11 +684,13 @@ export default function FieldReportPage() {
           ? await api.put<{ data: any }>(`/projects/${projectId}/field-report/${editReportId}`, {
               title: customTitle || undefined,
               items: validItems,
+              metadata: metadataPayload(),
             })
           : await api.post<{ data: any }>(`/projects/${projectId}/field-report`, {
               type: reportType,
               title: customTitle || undefined,
               items: validItems,
+              metadata: metadataPayload(),
             })
         setResultReport(reportRes.data)
       }
@@ -647,6 +721,8 @@ export default function FieldReportPage() {
     setPlanDialogOpen(false)
     setActivePlan(null)
     setPendingTitle('')
+    setPendingRemark('')
+    setPendingPhotoCaption('')
     setPendingCategory('')
     setPendingSeverity('')
     setPendingStandardIds([])
@@ -654,6 +730,8 @@ export default function FieldReportPage() {
     setMatchedTemplateId(null)
     setSaveAsTemplate(false)
     setNewStandardOpen(false)
+    setPropertyDetails(EMPTY_PROPERTY_DETAILS)
+    setPropertyDetailsOpen(false)
   }
 
   return (
@@ -708,7 +786,7 @@ export default function FieldReportPage() {
             {TYPES.map(({ value, label, desc, icon: Icon }) => (
               <button
                 key={value}
-                onClick={() => setReportType(value)}
+                onClick={() => { setReportType(value); if (value === 'HOME_INSPECTION') setPropertyDetailsOpen(true) }}
                 className="w-full card flex items-center gap-3 text-right hover:border-primary/30 hover:shadow-md transition-all"
               >
                 <div className="w-11 h-11 rounded-xl bg-primary-50 flex items-center justify-center shrink-0">
@@ -737,15 +815,101 @@ export default function FieldReportPage() {
                   </span>
                 )}
               </div>
-              {editReportId ? (
-                <button onClick={() => router.push(`/reports?project=${projectId}`)} className="text-xs text-gray-400 hover:text-danger">
-                  בטל עריכה
-                </button>
-              ) : (
-                <button onClick={resetAll} className="text-xs text-gray-400 hover:text-danger">החלף סוג דוח</button>
-              )}
+              <div className="flex items-center gap-3">
+                {isHomeInspection && !propertyDetailsOpen && (
+                  <button onClick={() => setPropertyDetailsOpen(true)} className="text-xs text-primary hover:underline">
+                    ערוך פרטי נכס
+                  </button>
+                )}
+                {editReportId ? (
+                  <button onClick={() => router.push(`/reports?project=${projectId}`)} className="text-xs text-gray-400 hover:text-danger">
+                    בטל עריכה
+                  </button>
+                ) : (
+                  <button onClick={resetAll} className="text-xs text-gray-400 hover:text-danger">החלף סוג דוח</button>
+                )}
+              </div>
             </div>
 
+            {/* פרטי מזמין/ביקור/נכס — נלכדים פעם אחת לדוח, לפני תיעוד הממצאים */}
+            {isHomeInspection && propertyDetailsOpen ? (
+              <div className="card space-y-4">
+                <h3 className="font-semibold text-neutral-dark text-sm">פרטי מזמין וביקור</h3>
+                <Input
+                  label="לכבוד (שם המזמין)"
+                  value={propertyDetails.clientName}
+                  onChange={(e) => setPropertyDetails((p) => ({ ...p, clientName: e.target.value }))}
+                />
+                <Input
+                  label="תאריך ביקור בנכס"
+                  type="date"
+                  value={propertyDetails.visitDate}
+                  onChange={(e) => setPropertyDetails((p) => ({ ...p, visitDate: e.target.value }))}
+                />
+
+                <h3 className="font-semibold text-neutral-dark text-sm pt-2 border-t border-gray-50">תיאור הנכס</h3>
+                <Input
+                  label="סוג הנכס"
+                  value={propertyDetails.propertyType}
+                  onChange={(e) => setPropertyDetails((p) => ({ ...p, propertyType: e.target.value }))}
+                  placeholder="דירת מגורים, 5 חדרים"
+                />
+                <Textarea
+                  label="הנכס כולל (רשימת חדרים)"
+                  value={propertyDetails.roomsIncluded}
+                  onChange={(e) => setPropertyDetails((p) => ({ ...p, roomsIncluded: e.target.value }))}
+                  placeholder="חדר דיור (סלון), מטבח, מרפסת שמש, חדר שינה 1..."
+                />
+                <Input
+                  label="הנכס מאוכלס"
+                  value={propertyDetails.occupied}
+                  onChange={(e) => setPropertyDetails((p) => ({ ...p, occupied: e.target.value }))}
+                  placeholder="כן / לא"
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium text-neutral-dark">חיבור לחשמל</label>
+                    <div className="flex gap-2 mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setPropertyDetails((p) => ({ ...p, electricityConnected: true }))}
+                        className={`flex-1 text-xs px-2.5 py-1.5 rounded-full border transition-colors ${propertyDetails.electricityConnected === true ? 'bg-primary text-white border-primary' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+                      >יש</button>
+                      <button
+                        type="button"
+                        onClick={() => setPropertyDetails((p) => ({ ...p, electricityConnected: false }))}
+                        className={`flex-1 text-xs px-2.5 py-1.5 rounded-full border transition-colors ${propertyDetails.electricityConnected === false ? 'bg-primary text-white border-primary' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+                      >אין</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-neutral-dark">חיבור למים</label>
+                    <div className="flex gap-2 mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setPropertyDetails((p) => ({ ...p, waterConnected: true }))}
+                        className={`flex-1 text-xs px-2.5 py-1.5 rounded-full border transition-colors ${propertyDetails.waterConnected === true ? 'bg-primary text-white border-primary' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+                      >יש</button>
+                      <button
+                        type="button"
+                        onClick={() => setPropertyDetails((p) => ({ ...p, waterConnected: false }))}
+                        className={`flex-1 text-xs px-2.5 py-1.5 rounded-full border transition-colors ${propertyDetails.waterConnected === false ? 'bg-primary text-white border-primary' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+                      >אין</button>
+                    </div>
+                  </div>
+                </div>
+                <Textarea
+                  label="הערות גורפות לדוח"
+                  value={propertyDetails.generalNotes}
+                  onChange={(e) => setPropertyDetails((p) => ({ ...p, generalNotes: e.target.value }))}
+                />
+
+                <Button onClick={() => setPropertyDetailsOpen(false)} className="w-full">
+                  המשך לתיעוד ממצאים
+                </Button>
+              </div>
+            ) : (
+            <>
             {/* Capture / pending item */}
             {pendingPhoto ? (
               <div className="card space-y-3">
@@ -761,24 +925,38 @@ export default function FieldReportPage() {
                   </button>
                 </div>
 
+                {/* כיתוב לתמונה הראשית — דוח בדק בית בלבד */}
+                {isHomeInspection && (
+                  <input
+                    value={pendingPhotoCaption}
+                    onChange={(e) => setPendingPhotoCaption(e.target.value)}
+                    placeholder="כיתוב לתמונה (אופציונלי, למשל: שריטה על אלומיניום מעקה)"
+                    className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-primary"
+                  />
+                )}
+
                 {/* תמונות נוספות לאותו ממצא — דוח בדק בית בלבד */}
                 {isHomeInspection && (
                   <div>
                     <p className="text-xs font-medium text-gray-500 mb-2">תמונות נוספות לממצא זה (אופציונלי)</p>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="space-y-2">
                       {pendingExtraPhotos.map((ep, i) => (
-                        <div key={i} className="relative w-16 h-16 shrink-0">
-                          <img src={ep.previewUrl} className="w-16 h-16 object-cover rounded-lg" />
-                          <button
-                            onClick={() => removeExtraPhoto(i)}
-                            className="absolute -top-1.5 -left-1.5 bg-white rounded-full shadow p-0.5 text-danger"
-                          >
-                            <X size={12} />
+                        <div key={i} className="flex items-center gap-2">
+                          <img src={ep.previewUrl} className="w-12 h-12 object-cover rounded-lg shrink-0" />
+                          <input
+                            value={ep.caption || ''}
+                            onChange={(e) => updateExtraPhotoCaption(i, e.target.value)}
+                            placeholder="כיתוב לתמונה..."
+                            className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-primary"
+                          />
+                          <button onClick={() => removeExtraPhoto(i)} className="p-1.5 text-gray-400 hover:text-danger shrink-0">
+                            <X size={14} />
                           </button>
                         </div>
                       ))}
-                      <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-primary/40 transition-colors shrink-0">
-                        <Plus size={18} className="text-gray-400" />
+                      <label className="flex items-center justify-center gap-2 py-2 rounded-lg border-2 border-dashed border-gray-300 cursor-pointer hover:border-primary/40 transition-colors text-xs text-gray-500">
+                        <Plus size={14} />
+                        הוסף תמונה נוספת
                         <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleExtraPhotoPicked} />
                       </label>
                     </div>
@@ -957,6 +1135,14 @@ export default function FieldReportPage() {
                   placeholder={isHomeInspection ? 'המלצה — מה יש לתקן...' : 'כתוב ממצא לתמונה הזו...'}
                 />
 
+                {isHomeInspection && (
+                  <Textarea
+                    value={pendingRemark}
+                    onChange={(e) => setPendingRemark(e.target.value)}
+                    placeholder="הערה נוספת (אופציונלי)..."
+                  />
+                )}
+
                 {isHomeInspection && !matchedTemplateId && pendingTitle.trim() && pendingNote.trim() && (
                   <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
                     <input
@@ -1058,12 +1244,19 @@ export default function FieldReportPage() {
                           placeholder={isHomeInspection ? 'המלצה...' : 'הערה לממצא...'}
                           autoFocus
                         />
+                        {isHomeInspection && (
+                          <Textarea
+                            value={editingRemark}
+                            onChange={(e) => setEditingRemark(e.target.value)}
+                            placeholder="הערה נוספת..."
+                          />
+                        )}
                         <div className="flex gap-2">
                           <Button size="sm" onClick={saveEditNote} className="flex-1">
                             <Check size={13} />
                             שמור
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => { setEditingItemId(null); setEditingNote('') }}>
+                          <Button size="sm" variant="outline" onClick={() => { setEditingItemId(null); setEditingNote(''); setEditingRemark('') }}>
                             ביטול
                           </Button>
                         </div>
@@ -1095,6 +1288,8 @@ export default function FieldReportPage() {
                   </Button>
                 )}
               </div>
+            )}
+            </>
             )}
           </div>
         )}

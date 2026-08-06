@@ -5,8 +5,14 @@ import { getOrgBranding } from '../services/branding'
 import { saveFile, deleteFile } from '../services/storage'
 import { z } from 'zod'
 
+const extraPhotoSchema = z.object({
+  photoId: z.string(),
+  caption: z.string().optional(),
+})
+
 const itemSchema = z.object({
   photoId: z.string(),
+  photoCaption: z.string().optional(),
   planPhotoId: z.string().optional(),
   note: z.string().optional(),
   room: z.string().optional(),
@@ -16,11 +22,24 @@ const itemSchema = z.object({
   // דוח בדק בית בלבד — שדות אדיטיביים, לא נוגעים בשלושת סוגי הדוח האחרים
   title: z.string().optional(),
   recommendation: z.string().optional(),
+  remark: z.string().optional(),
   category: z.string().optional(),
   severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
   standardIds: z.array(z.string()).optional(),
-  extraPhotoIds: z.array(z.string()).optional(),
+  extraPhotos: z.array(extraPhotoSchema).optional(),
 })
+
+// פרטי מזמין/ביקור/נכס — דוח בדק בית בלבד, נשמרים ברמת הדוח (לא לכל ממצא)
+const metadataSchema = z.object({
+  clientName: z.string().optional(),
+  visitDate: z.string().optional(),
+  propertyType: z.string().optional(),
+  roomsIncluded: z.string().optional(),
+  occupied: z.string().optional(),
+  electricityConnected: z.boolean().optional(),
+  waterConnected: z.boolean().optional(),
+  generalNotes: z.string().optional(),
+}).optional()
 
 const createSchema = z.object({
   type: z.enum(['INSPECTION', 'HANDOVER', 'HOME_INSPECTION']),
@@ -29,17 +48,20 @@ const createSchema = z.object({
   photoIds: z.array(z.string()).optional(),
   // פורמט חדש — כל ממצא עם תמונת תוכנית מוצמדת אופציונלית
   items: z.array(itemSchema).optional(),
+  metadata: metadataSchema,
 }).refine((d) => (d.items?.length || d.photoIds?.length), { message: 'נדרשת לפחות תמונה אחת' })
 
 const updateSchema = z.object({
   title: z.string().optional(),
   items: z.array(itemSchema).min(1),
+  metadata: metadataSchema,
 })
 
 const draftUpsertSchema = z.object({
   type: z.enum(['DEFECTS', 'INSPECTION', 'HANDOVER', 'HOME_INSPECTION']),
   title: z.string().optional(),
   items: z.array(itemSchema),
+  metadata: metadataSchema,
 })
 
 type ReqItem = z.infer<typeof itemSchema>
@@ -61,7 +83,7 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
 
   async function buildPdfItems(projectId: string, organizationId: string, reqItems: ReqItem[]) {
     const allPhotoIds = reqItems
-      .flatMap((it) => [it.photoId, it.planPhotoId, ...(it.extraPhotoIds ?? [])])
+      .flatMap((it) => [it.photoId, it.planPhotoId, ...(it.extraPhotos ?? []).map((ep) => ep.photoId)])
       .filter((id): id is string => !!id)
     const photos = await fastify.prisma.photo.findMany({
       where: { id: { in: allPhotoIds }, projectId },
@@ -81,24 +103,31 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
           const p = photoById.get(it.photoId)
           if (!p) return null
           const plan = it.planPhotoId ? photoById.get(it.planPhotoId) : undefined
-          const extraPhotoUrls = (it.extraPhotoIds ?? [])
-            .map((id) => photoById.get(id)?.url)
-            .filter((u): u is string => !!u)
+          const extraPhotos = (it.extraPhotos ?? [])
+            .map((ep) => {
+              const photo = photoById.get(ep.photoId)
+              return photo ? { url: photo.url, caption: ep.caption } : null
+            })
+            .filter((ep): ep is { url: string; caption: string | undefined } => !!ep)
           const standardRefs = (it.standardIds ?? [])
             .map((id) => standardById.get(id))
             .filter((s): s is NonNullable<typeof s> => !!s)
           return {
             photoUrl: p.url,
+            photoCaption: it.photoCaption,
             note: itemNote(it, p.caption || ''),
             planUrl: plan?.url,
             title: it.title,
             recommendation: it.recommendation,
+            remark: it.remark,
             room: it.room,
+            category: it.category,
             severity: it.severity,
-            extraPhotoUrls,
+            extraPhotos,
             standards: standardRefs.map((s) => ({
               sourceType: s.sourceType,
               code: s.code,
+              description: s.description ?? undefined,
               precedenceNote: s.precedenceNote ?? undefined,
               references: (s.references as any) ?? [],
             })),
@@ -127,7 +156,7 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     const user = await fastify.prisma.user.findUnique({ where: { id: request.user.userId } })
 
     const pdfBuffer = body.type === 'HOME_INSPECTION'
-      ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name })
+      ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name, metadata: body.metadata })
       : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name })
 
     const filename = `report-${Date.now()}.pdf`
@@ -141,6 +170,7 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
         pdfUrl,
         generatedBy: request.user.userId,
         sourceItems: reqItems as any,
+        metadata: body.metadata as any,
       },
     })
 
@@ -160,7 +190,7 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
 
     const reqItems = report.sourceItems as unknown as ReqItem[]
     const allPhotoIds = reqItems
-      .flatMap((it) => [it.photoId, it.planPhotoId, ...(it.extraPhotoIds ?? [])])
+      .flatMap((it) => [it.photoId, it.planPhotoId, ...(it.extraPhotos ?? []).map((ep) => ep.photoId)])
       .filter((id): id is string => !!id)
     const photos = await fastify.prisma.photo.findMany({ where: { id: { in: allPhotoIds }, projectId } })
     const photoById = new Map(photos.map((p) => [p.id, p]))
@@ -171,14 +201,13 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
         ...it,
         photoUrl: photoById.get(it.photoId)!.url,
         planPhotoUrl: it.planPhotoId ? photoById.get(it.planPhotoId)?.url : undefined,
-        // זוגות {id, url} ולא שתי מערכים מקבילים — כך הלקוח יודע לדלג על העלאה חוזרת לפי photoId
-        extraPhotos: (it.extraPhotoIds ?? [])
-          .map((id) => (photoById.has(id) ? { photoId: id, url: photoById.get(id)!.url } : null))
-          .filter((p): p is { photoId: string; url: string } => !!p),
+        extraPhotos: (it.extraPhotos ?? [])
+          .map((ep) => (photoById.has(ep.photoId) ? { photoId: ep.photoId, url: photoById.get(ep.photoId)!.url, caption: ep.caption } : null))
+          .filter((p): p is { photoId: string; url: string; caption: string | undefined } => !!p),
       }))
 
     return reply.send({
-      data: { id: report.id, type: report.type, title: report.title, items },
+      data: { id: report.id, type: report.type, title: report.title, items, metadata: report.metadata },
     })
   })
 
@@ -203,9 +232,10 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     const branding = await getOrgBranding(fastify.prisma, request.user.organizationId)
     const title = body.title || report.title
     const user = await fastify.prisma.user.findUnique({ where: { id: request.user.userId } })
+    const metadata = body.metadata ?? (report.metadata as any)
 
     const pdfBuffer = report.type === 'HOME_INSPECTION'
-      ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name })
+      ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name, metadata })
       : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name })
 
     const filename = `report-${Date.now()}.pdf`
@@ -216,7 +246,7 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
 
     const updated = await fastify.prisma.report.update({
       where: { id: reportId },
-      data: { title, pdfUrl, sourceItems: body.items as any },
+      data: { title, pdfUrl, sourceItems: body.items as any, metadata: metadata as any },
     })
 
     return reply.send({ data: updated })
@@ -232,7 +262,9 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     if (!draft) return reply.send({ data: null })
 
     const reqItems = draft.items as unknown as ReqItem[]
-    const photoIds = reqItems.flatMap((it) => [it.photoId, ...(it.extraPhotoIds ?? [])]).filter(Boolean)
+    const photoIds = reqItems
+      .flatMap((it) => [it.photoId, ...(it.extraPhotos ?? []).map((ep) => ep.photoId)])
+      .filter(Boolean)
     const photos = await fastify.prisma.photo.findMany({ where: { id: { in: photoIds }, projectId } })
     const photoById = new Map(photos.map((p) => [p.id, p]))
     const items = reqItems
@@ -240,13 +272,13 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
       .map((it) => ({
         ...it,
         photoUrl: photoById.get(it.photoId)!.url,
-        extraPhotos: (it.extraPhotoIds ?? [])
-          .map((id) => (photoById.has(id) ? { photoId: id, url: photoById.get(id)!.url } : null))
-          .filter((p): p is { photoId: string; url: string } => !!p),
+        extraPhotos: (it.extraPhotos ?? [])
+          .map((ep) => (photoById.has(ep.photoId) ? { photoId: ep.photoId, url: photoById.get(ep.photoId)!.url, caption: ep.caption } : null))
+          .filter((p): p is { photoId: string; url: string; caption: string | undefined } => !!p),
       }))
 
     return reply.send({
-      data: { type: draft.type, title: draft.title, items, updatedAt: draft.updatedAt },
+      data: { type: draft.type, title: draft.title, items, metadata: draft.metadata, updatedAt: draft.updatedAt },
     })
   })
 
@@ -261,8 +293,8 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
 
     const draft = await fastify.prisma.fieldReportDraft.upsert({
       where: { projectId_userId: { projectId, userId: request.user.userId } },
-      create: { projectId, userId: request.user.userId, type: body.type, title: body.title, items: body.items as any },
-      update: { type: body.type, title: body.title, items: body.items as any },
+      create: { projectId, userId: request.user.userId, type: body.type, title: body.title, items: body.items as any, metadata: body.metadata as any },
+      update: { type: body.type, title: body.title, items: body.items as any, metadata: body.metadata as any },
     })
     return reply.send({ data: { updatedAt: draft.updatedAt } })
   })
