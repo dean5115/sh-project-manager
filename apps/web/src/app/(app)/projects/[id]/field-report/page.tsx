@@ -188,15 +188,13 @@ export default function FieldReportPage() {
     const q = pendingTitle.trim()
     if (!q) return []
     const queryWords = heWords(q)
-    const matches = templates.filter((t) => {
+    // אם נבחרה קטגוריה — ההצעות מוגבלות אך ורק אליה (תבניות ללא קטגוריה לא נכללות, כדי שהתוצאות יהיו רלוונטיות באמת)
+    const pool = pendingCategory ? templates.filter((t) => t.category === pendingCategory) : templates
+    const matches = pool.filter((t) => {
       const titleWords = heWords(t.title)
       return queryWords.every((qw) => titleWords.some((tw) => tw.includes(qw) || heWordMatch(qw, tw)))
     })
-    // ממצאים מהקטגוריה הנבחרת (אם נבחרה) קודם ברשימה
-    const sorted = pendingCategory
-      ? [...matches].sort((a, b) => Number(a.category !== pendingCategory) - Number(b.category !== pendingCategory))
-      : matches
-    return sorted.slice(0, 8)
+    return matches.slice(0, 8)
   }, [pendingTitle, templates, pendingCategory])
 
   // מצב עריכה — טעינת דוח קיים מהשרת
