@@ -9,7 +9,7 @@ import { Select } from '@/components/ui/select'
 import {
   Camera, Trash2, ArrowRight, AlertTriangle, Search, ClipboardCheck, ClipboardList,
   Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map, Save, Pencil, PenLine,
-  Plus, BookMarked,
+  Plus, BookMarked, ChevronDown,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
@@ -140,6 +140,7 @@ export default function FieldReportPage() {
   const [pendingStandardIds, setPendingStandardIds] = useState<string[]>([])
   const [pendingExtraPhotos, setPendingExtraPhotos] = useState<ExtraPhoto[]>([])
   const [titleSuggestOpen, setTitleSuggestOpen] = useState(false)
+  const [browseCategoryOpen, setBrowseCategoryOpen] = useState(false)
   const [matchedTemplateId, setMatchedTemplateId] = useState<string | null>(null)
   const [saveAsTemplate, setSaveAsTemplate] = useState(false)
   const [newStandardOpen, setNewStandardOpen] = useState(false)
@@ -196,6 +197,11 @@ export default function FieldReportPage() {
     })
     return matches.slice(0, 8)
   }, [pendingTitle, templates, pendingCategory])
+  // כל תבניות הממצא של הקטגוריה הנבחרת — לעיון חופשי דרך כפתור החץ, גם בלי להקליד כלום
+  const categoryTemplates = useMemo(() => {
+    if (!pendingCategory) return []
+    return [...templates.filter((t) => t.category === pendingCategory)].sort((a, b) => a.title.localeCompare(b.title, 'he'))
+  }, [templates, pendingCategory])
 
   // מצב עריכה — טעינת דוח קיים מהשרת
   useEffect(() => {
@@ -984,15 +990,45 @@ export default function FieldReportPage() {
                 {isHomeInspection && (
                   <div className="relative">
                     <label className="text-sm font-medium text-neutral-dark">כותרת הממצא</label>
-                    <input
-                      value={pendingTitle}
-                      onChange={handleTitleChange}
-                      onFocus={() => setTitleSuggestOpen(true)}
-                      onBlur={() => setTimeout(() => setTitleSuggestOpen(false), 150)}
-                      placeholder="התחל להקליד... (למשל: משקוף דלת אינו צבוע)"
-                      className="mt-1 w-full text-sm border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-                    />
-                    {titleSuggestOpen && titleSuggestions.length > 0 && (
+                    <div className="relative mt-1">
+                      <input
+                        value={pendingTitle}
+                        onChange={handleTitleChange}
+                        onFocus={() => setTitleSuggestOpen(true)}
+                        onBlur={() => setTimeout(() => { setTitleSuggestOpen(false); setBrowseCategoryOpen(false) }, 150)}
+                        placeholder="התחל להקליד... (למשל: משקוף דלת אינו צבוע)"
+                        className={`w-full text-sm border border-gray-300 rounded-lg pr-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary ${pendingCategory ? 'pl-9' : 'pl-3'}`}
+                      />
+                      {pendingCategory && (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); setBrowseCategoryOpen((v) => !v); setTitleSuggestOpen(false) }}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-primary"
+                          title="הצג את כל הממצאים בקטגוריה זו"
+                        >
+                          <ChevronDown size={16} className={browseCategoryOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                        </button>
+                      )}
+                    </div>
+                    {browseCategoryOpen && (
+                      <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-auto">
+                        {categoryTemplates.length === 0 ? (
+                          <p className="px-3 py-2 text-xs text-gray-400">אין עדיין ממצאים בספרייה עבור קטגוריה זו</p>
+                        ) : (
+                          categoryTemplates.map((t) => (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onMouseDown={() => { selectTemplate(t); setBrowseCategoryOpen(false) }}
+                              className="w-full text-right px-3 py-2 text-sm hover:bg-primary-50 border-b border-gray-50 last:border-0"
+                            >
+                              {t.title}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                    {!browseCategoryOpen && titleSuggestOpen && titleSuggestions.length > 0 && (
                       <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-auto">
                         {titleSuggestions.map((t) => (
                           <button
