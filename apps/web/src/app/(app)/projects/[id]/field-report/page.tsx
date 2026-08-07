@@ -36,6 +36,16 @@ const ROOMS = [
   'חניה', 'חדר ילדים', 'חדר עבודה', 'גג',
 ]
 
+// התאמת אוטוקומפליט סלחנית להטיות בעברית (יחיד/רבים וכו') — משווה מילים לפי תת-מחרוזת או תחילית משותפת
+function heWords(s: string): string[] {
+  return s.trim().split(/\s+/).filter(Boolean)
+}
+function heWordMatch(a: string, b: string): boolean {
+  const prefixLen = Math.min(4, a.length, b.length)
+  if (prefixLen === 0) return false
+  return a.slice(0, prefixLen) === b.slice(0, prefixLen)
+}
+
 const SEVERITIES = [
   { value: 'LOW', label: 'נמוכה' },
   { value: 'MEDIUM', label: 'בינונית' },
@@ -177,8 +187,17 @@ export default function FieldReportPage() {
   const titleSuggestions = useMemo(() => {
     const q = pendingTitle.trim()
     if (!q) return []
-    return templates.filter((t) => t.title.includes(q)).slice(0, 6)
-  }, [pendingTitle, templates])
+    const queryWords = heWords(q)
+    const matches = templates.filter((t) => {
+      const titleWords = heWords(t.title)
+      return queryWords.every((qw) => titleWords.some((tw) => tw.includes(qw) || heWordMatch(qw, tw)))
+    })
+    // ממצאים מהקטגוריה הנבחרת (אם נבחרה) קודם ברשימה
+    const sorted = pendingCategory
+      ? [...matches].sort((a, b) => Number(a.category !== pendingCategory) - Number(b.category !== pendingCategory))
+      : matches
+    return sorted.slice(0, 8)
+  }, [pendingTitle, templates, pendingCategory])
 
   // מצב עריכה — טעינת דוח קיים מהשרת
   useEffect(() => {

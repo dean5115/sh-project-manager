@@ -542,7 +542,6 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
             <span class="hi-standard-source" style="background:${sourceTypeColor(std.sourceType)}">${esc(sourceTypeLabel(std.sourceType))}</span>
             <span class="hi-standard-code">${esc(std.code)}</span>
             ${std.description ? `<div class="hi-standard-quote">${multiline(std.description)}</div>` : ''}
-            ${std.precedenceNote ? `<div class="hi-precedence-note">${esc(std.precedenceNote)}</div>` : ''}
             ${refsHtml}
           </div>
         `
