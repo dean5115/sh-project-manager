@@ -459,11 +459,12 @@ function multiline(text: string): string {
   return esc(text).replace(/\n/g, '<br/>')
 }
 // ממלא placeholders בטקסטים החופשיים מהגדרות (הצהרה משפטית וכו') בערכי הדוח הנוכחי —
-// כך "{{שם המזמין}}" הופך לשם הלקוח בפועל בלי שהמשתמש יצטרך לערוך את הטקסט בכל דוח
+// כך "{{שם המזמין}}" הופך לשם הלקוח בפועל בלי שהמשתמש יצטרך לערוך את הטקסט בכל דוח.
+// הטקסט עצמו הוא HTML (מעורך עשיר) שמוצג כמו שהוא — לכן מבריחים (esc) רק את הערך המוזרק, לא את כל הטקסט
 function fillPlaceholders(text: string, vars: Record<string, string | undefined>): string {
   let result = text
   for (const [key, value] of Object.entries(vars)) {
-    result = result.split(`{{${key}}}`).join(value || '')
+    result = result.split(`{{${key}}}`).join(value ? esc(value) : '')
   }
   return result
 }
@@ -591,14 +592,14 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
       <h1 class="hi-title">${esc(title)}</h1>
       ${metadata?.clientName ? `<div class="hi-to">לכבוד: ${esc(metadata.clientName)}</div>` : ''}
       <div class="project-address">כתובת: ${esc(project.address)}</div>
-      ${branding?.hiLegalDeclaration ? `<div class="hi-declaration">${multiline(fillPh(branding.hiLegalDeclaration)!)}</div>` : ''}
+      ${branding?.hiLegalDeclaration ? `<div class="hi-declaration">${fillPh(branding.hiLegalDeclaration)}</div>` : ''}
       <div class="hi-meta-rows">
         ${metaRow('שם המזמין', metadata?.clientName)}
         ${metaRow('תאריך ביקור בנכס', visitDateStr)}
         ${metaRow('שם הבודק', generatedByName)}
       </div>
-      ${branding?.inspectorEducation ? `<div class="hi-subheading">אלה פרטי השכלתי</div><div class="hi-block-text">${multiline(fillPh(branding.inspectorEducation)!)}</div>` : ''}
-      ${branding?.inspectorExperience ? `<div class="hi-subheading">אלה פרטי נסיוני</div><div class="hi-block-text">${multiline(fillPh(branding.inspectorExperience)!)}</div>` : ''}
+      ${branding?.inspectorEducation ? `<div class="hi-subheading">אלה פרטי השכלתי</div><div class="hi-block-text">${fillPh(branding.inspectorEducation)}</div>` : ''}
+      ${branding?.inspectorExperience ? `<div class="hi-subheading">אלה פרטי נסיוני</div><div class="hi-block-text">${fillPh(branding.inspectorExperience)}</div>` : ''}
       ${branding?.hiLegalBasisList ? `
         <div class="hi-subheading">חוות הדעת מתבססת על:</div>
         <ul class="hi-list">${branding.hiLegalBasisList.split('\n').filter(Boolean).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
@@ -608,8 +609,8 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
 
   const methodologyHtml = (branding?.hiMethodology || branding?.hiWarrantyExplainer) ? `
     <div class="page-break">
-      ${branding?.hiMethodology ? `<div class="hi-block-text">${multiline(fillPh(branding.hiMethodology)!)}</div>` : ''}
-      ${branding?.hiWarrantyExplainer ? `<div class="hi-subheading">ידע כללי עבור הדייר</div><div class="hi-block-text">${multiline(fillPh(branding.hiWarrantyExplainer)!)}</div>` : ''}
+      ${branding?.hiMethodology ? `<div class="hi-block-text">${fillPh(branding.hiMethodology)}</div>` : ''}
+      ${branding?.hiWarrantyExplainer ? `<div class="hi-subheading">ידע כללי עבור הדייר</div><div class="hi-block-text">${fillPh(branding.hiWarrantyExplainer)}</div>` : ''}
     </div>
   ` : ''
 
@@ -628,7 +629,7 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
   ` : ''
 
   const additionalHtml = branding?.hiAdditionalContent
-    ? `<div class="page-break"><div class="hi-block-text">${multiline(fillPh(branding.hiAdditionalContent)!)}</div></div>`
+    ? `<div class="page-break"><div class="hi-block-text">${fillPh(branding.hiAdditionalContent)}</div></div>`
     : ''
 
   const tocHtml = `
@@ -656,6 +657,8 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
         .project-name { font-size: 15px; font-weight: bold; margin: 0 0 4px; }
         .project-address { font-size: 11px; color: #555; margin: 0 0 10px; }
         .hi-declaration { font-size: 11px; line-height: 1.7; color: #333; margin: 12px 0; text-align: justify; }
+        .hi-declaration p, .hi-block-text p { margin: 0 0 8px; }
+        .hi-declaration p:last-child, .hi-block-text p:last-child { margin-bottom: 0; }
         .hi-meta-rows { margin: 14px 0; }
         .hi-meta-row { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px solid #f0f0f0; font-size: 12px; }
         .hi-meta-label { font-weight: bold; color: ${color}; min-width: 130px; }

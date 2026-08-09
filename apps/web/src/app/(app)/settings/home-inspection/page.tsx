@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
+import { RichTextEditor } from '@/components/ui/rich-text-editor'
 import { useState, useEffect } from 'react'
 import { ClipboardList, Check } from 'lucide-react'
 
@@ -51,6 +52,7 @@ export default function HomeInspectionSettingsPage() {
 
   const set = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
+  const setRich = (k: keyof FormState) => (html: string) => setForm((f) => ({ ...f, [k]: html }))
 
   return (
     <AppLayout title="דוח בדק בית — טקסטים קבועים">
@@ -73,19 +75,17 @@ export default function HomeInspectionSettingsPage() {
             onChange={set('inspectorTitle')}
             placeholder="מהנדס אזרחי"
           />
-          <Textarea
+          <RichTextEditor
             label='"אלה פרטי השכלתי"'
             value={form.inspectorEducation}
-            onChange={set('inspectorEducation')}
+            onChange={setRich('inspectorEducation')}
             placeholder={'1. תואר ראשון - מהנדס אזרחי B.Sc. התמחות בביצוע ופיקוח מבנים.\n2. רשום ברשם המהנדסים מס\' תעודת רישוי ...'}
-            rows={4}
           />
-          <Textarea
+          <RichTextEditor
             label='"אלה פרטי נסיוני"'
             value={form.inspectorExperience}
-            onChange={set('inspectorExperience')}
+            onChange={setRich('inspectorExperience')}
             placeholder="מהנדס אזרחי בעל ניסיון מעשי בפרויקטי מגורים ובתחום התשתיות..."
-            rows={4}
           />
         </div>
 
@@ -98,12 +98,11 @@ export default function HomeInspectionSettingsPage() {
             <code className="bg-gray-100 px-1 rounded">{'{{כתובת הנכס}}'}</code>{' '}
             <code className="bg-gray-100 px-1 rounded">{'{{שם הבודק}}'}</code>
           </p>
-          <Textarea
+          <RichTextEditor
             label="הצהרה משפטית (מודפסת בראש הדוח)"
             value={form.hiLegalDeclaration}
-            onChange={set('hiLegalDeclaration')}
+            onChange={setRich('hiLegalDeclaration')}
             placeholder='אני הח"מ, נתבקשתי ע"י {{שם המזמין}}, לתת את חוות דעתי המקצועית לעניין ליקויי בניה וחסרים בנכס הנ"ל. הביקור נערך בתאריך {{תאריך הביקור}}...'
-            rows={6}
           />
           <Textarea
             label='"חוות הדעת מתבססת על" — שורה אחת לכל מקור'
@@ -116,29 +115,26 @@ export default function HomeInspectionSettingsPage() {
 
         <div className="card space-y-4">
           <h3 className="font-semibold text-neutral-dark">מתודולוגיה ומידע לדייר</h3>
-          <Textarea
+          <RichTextEditor
             label="ציוד ושיטת בדיקה"
             value={form.hiMethodology}
-            onChange={set('hiMethodology')}
+            onChange={setRich('hiMethodology')}
             placeholder="הסתייעתי במכשור לאיתור רטיבות מבוסס על טכנולוגיה מתקדמת..."
-            rows={4}
           />
-          <Textarea
+          <RichTextEditor
             label='"ידע כללי עבור הדייר" — הסבר תקופות בדק/אחריות'
             value={form.hiWarrantyExplainer}
-            onChange={set('hiWarrantyExplainer')}
+            onChange={setRich('hiWarrantyExplainer')}
             placeholder={'קבלן המוכר דירה נושא באחריות לתיקון ליקויים שנתגלו בדירה בתקופה שלאחר מסירתה...\n\nתקופת הבדק — ...\nתקופת האחריות — ...'}
-            rows={8}
           />
         </div>
 
         <div className="card space-y-4">
           <h3 className="font-semibold text-neutral-dark">תוכן נוסף</h3>
-          <Textarea
+          <RichTextEditor
             label="כל טקסט נוסף שתרצה שיופיע בעמודי הפתיח"
             value={form.hiAdditionalContent}
-            onChange={set('hiAdditionalContent')}
-            rows={4}
+            onChange={setRich('hiAdditionalContent')}
           />
         </div>
 
