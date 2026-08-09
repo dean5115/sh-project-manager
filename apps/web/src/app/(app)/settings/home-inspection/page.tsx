@@ -16,6 +16,16 @@ const EMPTY_FORM: FormState = {
   hiLegalDeclaration: '', hiLegalBasisList: '', hiMethodology: '', hiWarrantyExplainer: '', hiAdditionalContent: '',
 }
 
+// טקסטים שנשמרו כטקסט רגיל עם \n לפני שהעורך העשיר נוסף — ממירים ל-HTML כדי שירידות השורה
+// לא ייעלמו בעורך (מזהים "טקסט רגיל" לפי היעדר תגיות HTML)
+function escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+function normalizeRichText(text: string): string {
+  if (!text || /<[a-z][\s\S]*>/i.test(text)) return text
+  return text.split('\n').map((line) => `<p>${line ? escHtml(line) : '<br>'}</p>`).join('')
+}
+
 export default function HomeInspectionSettingsPage() {
   const qc = useQueryClient()
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
@@ -30,13 +40,13 @@ export default function HomeInspectionSettingsPage() {
     if (org?.data) {
       setForm({
         inspectorTitle: org.data.inspectorTitle || '',
-        inspectorEducation: org.data.inspectorEducation || '',
-        inspectorExperience: org.data.inspectorExperience || '',
-        hiLegalDeclaration: org.data.hiLegalDeclaration || '',
+        inspectorEducation: normalizeRichText(org.data.inspectorEducation || ''),
+        inspectorExperience: normalizeRichText(org.data.inspectorExperience || ''),
+        hiLegalDeclaration: normalizeRichText(org.data.hiLegalDeclaration || ''),
         hiLegalBasisList: org.data.hiLegalBasisList || '',
-        hiMethodology: org.data.hiMethodology || '',
-        hiWarrantyExplainer: org.data.hiWarrantyExplainer || '',
-        hiAdditionalContent: org.data.hiAdditionalContent || '',
+        hiMethodology: normalizeRichText(org.data.hiMethodology || ''),
+        hiWarrantyExplainer: normalizeRichText(org.data.hiWarrantyExplainer || ''),
+        hiAdditionalContent: normalizeRichText(org.data.hiAdditionalContent || ''),
       })
     }
   }, [org])

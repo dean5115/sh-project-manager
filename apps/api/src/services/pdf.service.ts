@@ -458,11 +458,23 @@ function severityColor(s: string): string {
 function multiline(text: string): string {
   return esc(text).replace(/\n/g, '<br/>')
 }
+// שדות הטקסט העשיר נשמרו בעבר כטקסט רגיל עם \n (לפני שהעורך העשיר קיים) — טקסט כזה מזוהה
+// בהעדר תגיות HTML, ומומר ל-<p> לפי שורה כדי שירידות השורה הישנות לא ייעלמו כשמציגים HTML גולמי
+function looksLikeHtml(text: string): boolean {
+  return /<[a-z][\s\S]*>/i.test(text)
+}
+function normalizeRichText(text: string): string {
+  if (looksLikeHtml(text)) return text
+  return text
+    .split('\n')
+    .map((line) => `<p>${line ? esc(line) : '<br>'}</p>`)
+    .join('')
+}
 // ממלא placeholders בטקסטים החופשיים מהגדרות (הצהרה משפטית וכו') בערכי הדוח הנוכחי —
 // כך "{{שם המזמין}}" הופך לשם הלקוח בפועל בלי שהמשתמש יצטרך לערוך את הטקסט בכל דוח.
 // הטקסט עצמו הוא HTML (מעורך עשיר) שמוצג כמו שהוא — לכן מבריחים (esc) רק את הערך המוזרק, לא את כל הטקסט
 function fillPlaceholders(text: string, vars: Record<string, string | undefined>): string {
-  let result = text
+  let result = normalizeRichText(text)
   for (const [key, value] of Object.entries(vars)) {
     result = result.split(`{{${key}}}`).join(value ? esc(value) : '')
   }
