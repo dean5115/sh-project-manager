@@ -91,11 +91,18 @@ export default function HomeInspectionSettingsPage() {
 
         <div className="card space-y-4">
           <h3 className="font-semibold text-neutral-dark">עמוד פתיח</h3>
+          <p className="text-xs text-gray-500 -mt-2">
+            אפשר להשתמש בשדות הבאים בכל טקסט בעמוד הזה — הם יתמלאו אוטומטית לפי פרטי הדוח בעת ההפקה:{' '}
+            <code className="bg-gray-100 px-1 rounded">{'{{שם המזמין}}'}</code>{' '}
+            <code className="bg-gray-100 px-1 rounded">{'{{תאריך הביקור}}'}</code>{' '}
+            <code className="bg-gray-100 px-1 rounded">{'{{כתובת הנכס}}'}</code>{' '}
+            <code className="bg-gray-100 px-1 rounded">{'{{שם הבודק}}'}</code>
+          </p>
           <Textarea
             label="הצהרה משפטית (מודפסת בראש הדוח)"
             value={form.hiLegalDeclaration}
             onChange={set('hiLegalDeclaration')}
-            placeholder='אני הח"מ, נתבקשתי לתת את חוות דעתי המקצועית לעניין ליקויי בניה וחסרים בנכס הנ"ל...'
+            placeholder='אני הח"מ, נתבקשתי ע"י {{שם המזמין}}, לתת את חוות דעתי המקצועית לעניין ליקויי בניה וחסרים בנכס הנ"ל. הביקור נערך בתאריך {{תאריך הביקור}}...'
             rows={6}
           />
           <Textarea

@@ -458,6 +458,15 @@ function severityColor(s: string): string {
 function multiline(text: string): string {
   return esc(text).replace(/\n/g, '<br/>')
 }
+// ממלא placeholders בטקסטים החופשיים מהגדרות (הצהרה משפטית וכו') בערכי הדוח הנוכחי —
+// כך "{{שם המזמין}}" הופך לשם הלקוח בפועל בלי שהמשתמש יצטרך לערוך את הטקסט בכל דוח
+function fillPlaceholders(text: string, vars: Record<string, string | undefined>): string {
+  let result = text
+  for (const [key, value] of Object.entries(vars)) {
+    result = result.split(`{{${key}}}`).join(value || '')
+  }
+  return result
+}
 function metaRow(label: string, value?: string | null): string {
   if (!value) return ''
   return `<div class="hi-meta-row"><span class="hi-meta-label">${esc(label)}</span><span class="hi-meta-value">${esc(value)}</span></div>`
@@ -475,6 +484,14 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
   const visitDateStr = metadata?.visitDate
     ? new Date(metadata.visitDate).toLocaleDateString('he-IL')
     : undefined
+  // placeholders זמינים בכל הטקסטים החופשיים מהגדרות — ר' /settings/home-inspection לרשימה המלאה
+  const placeholderVars = {
+    'שם המזמין': metadata?.clientName,
+    'תאריך הביקור': visitDateStr,
+    'כתובת הנכס': project.address,
+    'שם הבודק': generatedByName,
+  }
+  const fillPh = (text?: string) => (text ? fillPlaceholders(text, placeholderVars) : text)
 
   // קיבוץ לפי קטגוריה (לא לפי חדר!) — כך גם במסמך המקור: "1. דלת כניסה", "2. ריצוף" וכו',
   // מיקום/חדר הוא שדה מוצג בתוך כל ממצא ולא מפתח הקיבוץ. ברירת מחדל "אחר", לפי סדר הופעה ראשון.
@@ -574,14 +591,14 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
       <h1 class="hi-title">${esc(title)}</h1>
       ${metadata?.clientName ? `<div class="hi-to">לכבוד: ${esc(metadata.clientName)}</div>` : ''}
       <div class="project-address">כתובת: ${esc(project.address)}</div>
-      ${branding?.hiLegalDeclaration ? `<div class="hi-declaration">${multiline(branding.hiLegalDeclaration)}</div>` : ''}
+      ${branding?.hiLegalDeclaration ? `<div class="hi-declaration">${multiline(fillPh(branding.hiLegalDeclaration)!)}</div>` : ''}
       <div class="hi-meta-rows">
         ${metaRow('שם המזמין', metadata?.clientName)}
         ${metaRow('תאריך ביקור בנכס', visitDateStr)}
         ${metaRow('שם הבודק', generatedByName)}
       </div>
-      ${branding?.inspectorEducation ? `<div class="hi-subheading">אלה פרטי השכלתי</div><div class="hi-block-text">${multiline(branding.inspectorEducation)}</div>` : ''}
-      ${branding?.inspectorExperience ? `<div class="hi-subheading">אלה פרטי נסיוני</div><div class="hi-block-text">${multiline(branding.inspectorExperience)}</div>` : ''}
+      ${branding?.inspectorEducation ? `<div class="hi-subheading">אלה פרטי השכלתי</div><div class="hi-block-text">${multiline(fillPh(branding.inspectorEducation)!)}</div>` : ''}
+      ${branding?.inspectorExperience ? `<div class="hi-subheading">אלה פרטי נסיוני</div><div class="hi-block-text">${multiline(fillPh(branding.inspectorExperience)!)}</div>` : ''}
       ${branding?.hiLegalBasisList ? `
         <div class="hi-subheading">חוות הדעת מתבססת על:</div>
         <ul class="hi-list">${branding.hiLegalBasisList.split('\n').filter(Boolean).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
@@ -591,8 +608,8 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
 
   const methodologyHtml = (branding?.hiMethodology || branding?.hiWarrantyExplainer) ? `
     <div class="page-break">
-      ${branding?.hiMethodology ? `<div class="hi-block-text">${multiline(branding.hiMethodology)}</div>` : ''}
-      ${branding?.hiWarrantyExplainer ? `<div class="hi-subheading">ידע כללי עבור הדייר</div><div class="hi-block-text">${multiline(branding.hiWarrantyExplainer)}</div>` : ''}
+      ${branding?.hiMethodology ? `<div class="hi-block-text">${multiline(fillPh(branding.hiMethodology)!)}</div>` : ''}
+      ${branding?.hiWarrantyExplainer ? `<div class="hi-subheading">ידע כללי עבור הדייר</div><div class="hi-block-text">${multiline(fillPh(branding.hiWarrantyExplainer)!)}</div>` : ''}
     </div>
   ` : ''
 
@@ -611,7 +628,7 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
   ` : ''
 
   const additionalHtml = branding?.hiAdditionalContent
-    ? `<div class="page-break"><div class="hi-block-text">${multiline(branding.hiAdditionalContent)}</div></div>`
+    ? `<div class="page-break"><div class="hi-block-text">${multiline(fillPh(branding.hiAdditionalContent)!)}</div></div>`
     : ''
 
   const tocHtml = `
