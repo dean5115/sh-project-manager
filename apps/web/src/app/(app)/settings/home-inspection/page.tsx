@@ -64,6 +64,21 @@ export default function HomeInspectionSettingsPage() {
     setForm((f) => ({ ...f, [k]: e.target.value }))
   const setRich = (k: keyof FormState) => (html: string) => setForm((f) => ({ ...f, [k]: html }))
 
+  // ממתינים לטעינת הנתונים הקיימים לפני שמציגים את הטופס — כדי שעורך הטקסט העשיר תמיד יעלה
+  // עם התוכן הנכון מההתחלה (ולא עם ריק שאז "נדחף" לו תוכן מאוחר יותר, מה שלא תמיד מסתנכרן)
+  // ובנוסף מונע כל אפשרות של שמירה בטעות עם טופס ריק לפני שהנתונים נטענו
+  if (!org?.data) {
+    return (
+      <AppLayout title="דוח בדק בית — טקסטים קבועים">
+        <div className="max-w-2xl space-y-5">
+          <div className="card h-24 bg-gray-50 animate-pulse" />
+          <div className="card h-48 bg-gray-50 animate-pulse" />
+          <div className="card h-48 bg-gray-50 animate-pulse" />
+        </div>
+      </AppLayout>
+    )
+  }
+
   return (
     <AppLayout title="דוח בדק בית — טקסטים קבועים">
       <div className="max-w-2xl space-y-5">
