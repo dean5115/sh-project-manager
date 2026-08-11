@@ -45,6 +45,32 @@ function heWordMatch(a: string, b: string): boolean {
   if (prefixLen === 0) return false
   return a.slice(0, prefixLen) === b.slice(0, prefixLen)
 }
+function stripSpaces(s: string): string {
+  return s.replace(/\s+/g, '')
+}
+// ציון התאמה בין מה שהוקלד לבין כותרת תבנית — לא בוליאני, כדי שאפשר לדרג "הכי קרוב" גם כשאין התאמה מושלמת.
+// תופס גם ערכים דבוקים למילת יחס בלי רווח (כמו "מ1%" או "ל-60") כי הוא בודק גם התאמת תת-מחרוזת רציפה על כל הכותרת.
+function titleMatchScore(query: string, title: string): number {
+  const q = query.trim()
+  if (!q) return 0
+  const queryWords = heWords(q)
+  const titleWords = heWords(title)
+  const strippedTitle = stripSpaces(title)
+  const strippedQuery = stripSpaces(q)
+
+  let matchedWords = 0
+  for (const qw of queryWords) {
+    const hit = titleWords.some((tw) => tw.includes(qw) || heWordMatch(qw, tw))
+    if (hit) matchedWords++
+  }
+  const wordRatio = queryWords.length ? matchedWords / queryWords.length : 0
+
+  // בונוס גדול אם כל השאילתה (בלי רווחים) מופיעה כרצף אחד בתוך הכותרת — תופס ערכים דבוקים כמו "מ1%"
+  const substringBonus = strippedTitle.includes(strippedQuery) ? 1 : 0
+
+  if (wordRatio === 0 && substringBonus === 0) return 0
+  return wordRatio * 10 + substringBonus * 5
+}
 
 const SEVERITIES = [
   { value: 'LOW', label: 'נמוכה' },
@@ -188,14 +214,13 @@ export default function FieldReportPage() {
   const titleSuggestions = useMemo(() => {
     const q = pendingTitle.trim()
     if (!q) return []
-    const queryWords = heWords(q)
     // אם נבחרה קטגוריה — ההצעות מוגבלות אך ורק אליה (תבניות ללא קטגוריה לא נכללות, כדי שהתוצאות יהיו רלוונטיות באמת)
     const pool = pendingCategory ? templates.filter((t) => t.category === pendingCategory) : templates
-    const matches = pool.filter((t) => {
-      const titleWords = heWords(t.title)
-      return queryWords.every((qw) => titleWords.some((tw) => tw.includes(qw) || heWordMatch(qw, tw)))
-    })
-    return matches.slice(0, 8)
+    const scored = pool
+      .map((t) => ({ t, score: titleMatchScore(q, t.title) }))
+      .filter((s) => s.score > 0)
+      .sort((a, b) => b.score - a.score)
+    return scored.slice(0, 8).map((s) => s.t)
   }, [pendingTitle, templates, pendingCategory])
   // כל תבניות הממצא של הקטגוריה הנבחרת — לעיון חופשי דרך כפתור החץ, גם בלי להקליד כלום
   const categoryTemplates = useMemo(() => {
