@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { Input, Textarea } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { Plus, BookMarked, Trash2, Pencil, Upload, X, ImageIcon, FileUp } from 'lucide-react'
+import { Plus, BookMarked, Trash2, Pencil, Upload, X, ImageIcon, FileUp, FileText, ExternalLink } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { CATEGORY_LABELS } from '@/lib/utils'
 import type { Standard, StandardReference } from '@sitepilot/types'
@@ -30,11 +30,14 @@ const emptyForm = {
   description: '',
   precedenceNote: '',
   references: [] as StandardReference[],
+  fullDocumentUrl: '',
 }
 
 export default function StandardsPage() {
   const qc = useQueryClient()
   const refFileInput = useRef<HTMLInputElement>(null)
+  const fullDocFileInput = useRef<HTMLInputElement>(null)
+  const [uploadingFullDoc, setUploadingFullDoc] = useState(false)
   const [open, setOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Standard | null>(null)
   const [filterSource, setFilterSource] = useState('')
@@ -66,6 +69,7 @@ export default function StandardsPage() {
       description: s.description || '',
       precedenceNote: s.precedenceNote || '',
       references: s.references || [],
+      fullDocumentUrl: s.fullDocumentUrl || '',
     })
     setOpen(true)
   }
@@ -79,6 +83,7 @@ export default function StandardsPage() {
         description: form.description || undefined,
         precedenceNote: form.precedenceNote || undefined,
         references: form.references,
+        fullDocumentUrl: form.fullDocumentUrl || undefined,
       }
       return form.id ? api.put(`/standards/${form.id}`, payload) : api.post('/standards', payload)
     },
@@ -111,6 +116,21 @@ export default function StandardsPage() {
       setPendingCaption('')
     } finally {
       setUploadingRef(false)
+      e.target.value = ''
+    }
+  }
+
+  async function handleFullDocUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingFullDoc(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await api.upload<{ data: { url: string } }>('/photos/upload', fd)
+      setForm((f) => ({ ...f, fullDocumentUrl: res.data.url }))
+    } finally {
+      setUploadingFullDoc(false)
       e.target.value = ''
     }
   }
@@ -219,6 +239,18 @@ export default function StandardsPage() {
                       {s.references!.length} תמונות רפרנס
                     </p>
                   )}
+                  {s.fullDocumentUrl && (
+                    <a
+                      href={s.fullDocumentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-primary flex items-center gap-1 hover:underline w-fit"
+                    >
+                      <FileText size={12} />
+                      צפה בתקן המלא
+                      <ExternalLink size={11} />
+                    </a>
+                  )}
                   <div className="flex gap-2 pt-2 border-t border-gray-50">
                     <Button size="sm" variant="outline" onClick={() => openEdit(s)} className="flex-1">
                       <Pencil size={13} />
@@ -276,6 +308,37 @@ export default function StandardsPage() {
             value={form.precedenceNote}
             onChange={(e) => setForm((f) => ({ ...f, precedenceNote: e.target.value }))}
           />
+
+          <div>
+            <label className="text-sm font-medium text-neutral-dark">קובץ PDF מלא של התקן (אופציונלי)</label>
+            <div className="mt-1.5">
+              {form.fullDocumentUrl ? (
+                <div className="flex items-center gap-2 border border-gray-100 rounded-lg p-2">
+                  <FileText size={16} className="text-gray-400 shrink-0" />
+                  <a
+                    href={form.fullDocumentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 text-sm text-primary hover:underline truncate"
+                  >
+                    צפה בקובץ שהועלה
+                  </a>
+                  <button
+                    onClick={() => setForm((f) => ({ ...f, fullDocumentUrl: '' }))}
+                    className="p-1.5 text-gray-400 hover:text-danger shrink-0"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <Button variant="outline" size="sm" loading={uploadingFullDoc} type="button" onClick={() => fullDocFileInput.current?.click()}>
+                  <Upload size={13} />
+                  העלה קובץ PDF
+                </Button>
+              )}
+              <input ref={fullDocFileInput} type="file" accept="application/pdf" className="hidden" onChange={handleFullDocUpload} />
+            </div>
+          </div>
 
           <div>
             <label className="text-sm font-medium text-neutral-dark">תמונות רפרנס (נוסח תקן, פסיקה וכו')</label>

@@ -475,6 +475,7 @@ model Standard {
   description    String?
   precedenceNote String?            // הערת עדיפות/חריגה, למשל "בנושא מרחבי שימוש: ראה הל\"ת"
   references     Json?              // [{ imageUrl, caption }] — סריקות תקן/פסיקה, מוצגות בדוח בדק הבית
+  fullDocumentUrl String?           // קובץ ה-PDF המלא של התקן, לצפייה מלאה מתוך מסך הניהול
   createdAt      DateTime           @default(now())
 
   @@index([organizationId])

@@ -22,6 +22,7 @@ const createSchema = z.object({
   description: z.preprocess(emptyToUndefined, z.string().optional()),
   precedenceNote: z.preprocess(emptyToUndefined, z.string().optional()),
   references: z.array(referenceSchema).optional(),
+  fullDocumentUrl: z.preprocess(emptyToUndefined, z.string().optional()),
 })
 
 export default async function standardRoutes(fastify: FastifyInstance) {

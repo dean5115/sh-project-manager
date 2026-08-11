@@ -238,6 +238,7 @@ export interface Standard {
   description?: string | null
   precedenceNote?: string | null
   references?: StandardReference[] | null
+  fullDocumentUrl?: string | null
   createdAt: string
 }
 
