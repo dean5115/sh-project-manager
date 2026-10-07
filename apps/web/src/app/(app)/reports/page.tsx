@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
 import { FileText, Download, Plus, CheckCircle2, Trash2, Pencil } from 'lucide-react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { formatDate } from '@/lib/utils'
 import { useState } from 'react'
 
@@ -57,8 +58,13 @@ const REPORT_TYPES = [
 const HOME_INSPECTION_TYPE = { value: 'HOME_INSPECTION', label: 'דוח בדק בית', icon: '🏠' }
 const ALL_REPORT_TYPES = [...REPORT_TYPES, HOME_INSPECTION_TYPE]
 
+// דוחות פיקוח ומסירה בנויים מתמונות וממצאים שנאספים בשטח — הפקה ידנית מכאן הייתה יוצרת PDF ריק,
+// לכן מפנים אותם ל-flow "דוח שטח" של הפרויקט
+const FIELD_REPORT_TYPES = ['INSPECTION', 'HANDOVER']
+
 export default function ReportsPage() {
   const qc = useQueryClient()
+  const router = useRouter()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState({ projectId: '', type: 'DAILY', title: '', dateFrom: '', dateTo: '' })
   const [deleteTarget, setDeleteTarget] = useState<any>(null)
@@ -102,6 +108,7 @@ export default function ReportsPage() {
 
   const projectOptions = (projects?.data ?? []).map((p: any) => ({ value: p.id, label: p.name }))
   const selectedType = REPORT_TYPES.find((t) => t.value === form.type)
+  const isFieldReportType = FIELD_REPORT_TYPES.includes(form.type)
 
   return (
     <AppLayout title="דוחות">
@@ -113,7 +120,7 @@ export default function ReportsPage() {
             onChange={(e) => setSelectedProject(e.target.value)}
             placeholder=""
           />
-          <Button size="sm" onClick={() => { setForm((f) => ({ ...f, projectId: selectedProject })); setOpen(true) }}>
+          <Button size="sm" onClick={() => { generateMutation.reset(); setForm((f) => ({ ...f, projectId: selectedProject })); setOpen(true) }}>
             <Plus size={14} />
             הפק דוח חדש
           </Button>
@@ -239,19 +246,44 @@ export default function ReportsPage() {
             </div>
           )}
 
+          {isFieldReportType && (
+            <div className="bg-amber-50 rounded-xl p-3 text-xs text-amber-800">
+              {selectedType?.label} נבנה מתמונות וממצאים מהשטח. לחיצה על "המשך לדוח שטח" תעביר אותך למסך
+              שבו מצלמים, מוסיפים הערות ומפיקים את הדוח.
+            </div>
+          )}
+
           <div className="bg-blue-50 rounded-xl p-3 text-xs text-blue-700">
             <strong>טיפ:</strong> הדוח יכלול את לוגו החברה, הצבע המותגי ופרטי הקשר שלך.
             ניתן לערוך אותם ב<a href="/settings/organization" className="underline font-medium">הגדרות ארגון</a>.
           </div>
 
+          {generateMutation.isError && (
+            <p className="text-sm text-danger">
+              הפקת הדוח נכשלה: {(generateMutation.error as Error)?.message || 'שגיאה לא ידועה'}
+            </p>
+          )}
+          {!form.projectId && (
+            <p className="text-xs text-gray-500">יש לבחור פרויקט כדי להפיק דוח</p>
+          )}
+
           <div className="flex gap-2">
-            <Button
-              onClick={() => generateMutation.mutate(form)}
-              loading={generateMutation.isPending}
-              disabled={!form.projectId}
-            >
-              הפק דוח PDF
-            </Button>
+            {isFieldReportType ? (
+              <Button
+                onClick={() => router.push(`/projects/${form.projectId}/field-report`)}
+                disabled={!form.projectId}
+              >
+                המשך לדוח שטח
+              </Button>
+            ) : (
+              <Button
+                onClick={() => generateMutation.mutate(form)}
+                loading={generateMutation.isPending}
+                disabled={!form.projectId}
+              >
+                הפק דוח PDF
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setOpen(false)}>ביטול</Button>
           </div>
         </div>

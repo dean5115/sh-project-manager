@@ -20,6 +20,14 @@ import { generateAnnotatedPlanImage } from '@/lib/plan-annotation'
 import { saveDraft, loadDraft, deleteDraft, type FieldReportDraft } from '@/lib/field-report-draft'
 import type { Standard, FindingTemplate } from '@sitepilot/types'
 
+// מעלים תמונות אחת-אחת ולא במקביל — העלאה בו-זמנית של 10+ תמונות מהפלאפון מציפה את השרת
+// (free tier, 512MB) ומסתיימת ב-HTTP 502
+async function mapSeq<T, R>(arr: T[], fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = []
+  for (let i = 0; i < arr.length; i++) out.push(await fn(arr[i], i))
+  return out
+}
+
 type ReportType = 'DEFECTS' | 'INSPECTION' | 'HANDOVER' | 'HOME_INSPECTION'
 
 const TYPES: { value: ReportType; label: string; desc: string; icon: typeof AlertTriangle }[] = [
@@ -147,6 +155,8 @@ export default function FieldReportPage() {
   const [isCustomRoom, setIsCustomRoom] = useState(false)
   const [customTitle, setCustomTitle] = useState('')
   const [finishing, setFinishing] = useState(false)
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [progressMsg, setProgressMsg] = useState('')
   const [resultReport, setResultReport] = useState<any>(null)
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -310,7 +320,29 @@ export default function FieldReportPage() {
     }
   }
 
+  // יציאה מהמסך באמצע העלאה קוטעת את השמירה/ההפקה — מזהירים לפני סגירה או רענון
+  useEffect(() => {
+    if (!finishing && !savingDraft) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [finishing, savingDraft])
+
   async function saveDraftNow() {
+    if (!reportType || savingDraft) return
+    setSavingDraft(true)
+    setErrorMsg('')
+    setDraftSavedMsg('')
+    setProgressMsg('שומר טיוטה ומעלה תמונות לענן... נא להישאר במסך')
+    try {
+      await saveDraftNowImpl()
+    } finally {
+      setSavingDraft(false)
+      setProgressMsg('')
+    }
+  }
+
+  async function saveDraftNowImpl() {
     if (!reportType) return
     // 1) שמירה מקומית קודם — עובדת תמיד, גם בלי אינטרנט, ומהווה רשת ביטחון
     const localDraft: FieldReportDraft = {
@@ -349,7 +381,7 @@ export default function FieldReportPage() {
     // 2) ניסיון סנכרון לענן — best effort; בלי קליטה זה נכשל בשקט והשמירה המקומית מספיקה
     let cloudSynced = false
     try {
-      const uploaded = await Promise.all(items.map(async (item) => {
+      const uploaded = await mapSeq(items, async (item) => {
         let photoId = item.photoId
         if (!photoId && item.file) {
           const fd = new FormData()
@@ -360,7 +392,7 @@ export default function FieldReportPage() {
         }
         let extraPhotoIds: (string | null)[] | undefined
         if (item.extraPhotos?.length) {
-          extraPhotoIds = await Promise.all(item.extraPhotos.map(async (ep) => {
+          extraPhotoIds = await mapSeq(item.extraPhotos, async (ep) => {
             if (ep.photoId) return ep.photoId
             if (!ep.file) return null
             const fd = new FormData()
@@ -368,10 +400,10 @@ export default function FieldReportPage() {
             fd.append('projectId', projectId)
             const res = await api.upload<{ data: any }>('/photos/upload', fd)
             return res.data.id as string
-          }))
+          })
         }
         return { itemId: item.id, photoId, extraPhotoIds }
-      }))
+      })
       // מסמנים על ה-items שכבר הועלו כדי שלא יועלו שוב בסיבוב הבא (טיוטה נוספת או סיום)
       setItems((prev) => prev.map((it) => {
         const u = uploaded.find((x) => x.itemId === it.id)
@@ -624,12 +656,14 @@ export default function FieldReportPage() {
   }
 
   async function finish() {
-    if (!reportType || items.length === 0) return
+    if (!reportType || items.length === 0 || finishing) return
     setFinishing(true)
     setErrorMsg('')
+    setDraftSavedMsg('')
+    setProgressMsg(`מעלה ${items.length} תמונות ומפיק את הדוח... זה יכול לקחת עד דקה, נא להישאר במסך`)
     try {
       if (reportType === 'DEFECTS') {
-        await Promise.all(items.map(async (item) => {
+        await mapSeq(items, async (item) => {
           if (!item.file) return
           const locationParts = [item.room, item.planName ? `תוכנית: ${item.planName}` : ''].filter(Boolean)
           const prefix = locationParts.length ? `[${locationParts.join(' | ')}] ` : ''
@@ -657,7 +691,7 @@ export default function FieldReportPage() {
               await api.upload('/photos/upload', planFd)
             }
           }
-        }))
+        })
         const today = new Date().toISOString().slice(0, 10)
         const reportRes = await api.post<{ data: any }>('/reports/generate', {
           projectId,
@@ -668,7 +702,8 @@ export default function FieldReportPage() {
         })
         setResultReport(reportRes.data)
       } else {
-        const reportItems = await Promise.all(items.map(async (item) => {
+        const reportItems = await mapSeq(items, async (item, idx) => {
+          setProgressMsg(`מעלה תמונה ${idx + 1} מתוך ${items.length}... נא להישאר במסך`)
           // תמונה קיימת בשרת (מצב עריכה) — אין צורך להעלות שוב
           let photoId = item.photoId
           let planPhotoId = item.planPhotoId
@@ -692,12 +727,15 @@ export default function FieldReportPage() {
                 planPhotoId = planRes.data.id
               }
             }
+            // שומרים את מזהה התמונה על הממצא — אם ההפקה נכשלת באמצע, לחיצה חוזרת ממשיכה מאותה נקודה ולא מעלה הכל מחדש
+            const uploadedPhotoId = photoId
+            setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, photoId: uploadedPhotoId, planPhotoId } : it)))
           }
 
           // תמונות נוספות (דוח בדק בית) — מעלים רק אלה שעדיין קבצים מקומיים, שומרים כיתוב לכל אחת
           let extraPhotos: { photoId: string; caption?: string }[] | undefined
           if (item.extraPhotos?.length) {
-            const uploaded = await Promise.all(item.extraPhotos.map(async (ep) => {
+            const uploaded = await mapSeq(item.extraPhotos, async (ep) => {
               if (ep.photoId) return { photoId: ep.photoId, caption: ep.caption }
               if (!ep.file) return null
               const fd = new FormData()
@@ -705,7 +743,7 @@ export default function FieldReportPage() {
               fd.append('projectId', projectId)
               const res = await api.upload<{ data: any }>('/photos/upload', fd)
               return { photoId: res.data.id as string, caption: ep.caption }
-            }))
+            })
             extraPhotos = uploaded.filter((ep): ep is { photoId: string; caption: string | undefined } => !!ep)
           }
 
@@ -726,8 +764,9 @@ export default function FieldReportPage() {
             planName: item.planName,
             planPin: item.planPin,
           }
-        }))
+        })
         const validItems = reportItems.filter((it) => it.photoId)
+        setProgressMsg('כל התמונות הועלו — מפיק את קובץ ה-PDF... זה יכול לקחת עד דקה')
         const reportRes = editReportId
           ? await api.put<{ data: any }>(`/projects/${projectId}/field-report/${editReportId}`, {
               title: customTitle || undefined,
@@ -750,6 +789,7 @@ export default function FieldReportPage() {
       setErrorMsg(err.message || 'שגיאה בהפקת הדוח')
     } finally {
       setFinishing(false)
+      setProgressMsg('')
     }
   }
 
@@ -1354,13 +1394,14 @@ export default function FieldReportPage() {
                   placeholder={`${typeInfo?.label} — שם הפרויקט`}
                 />
                 {errorMsg && <p className="text-sm text-danger">{errorMsg}</p>}
+                {progressMsg && <p className="text-sm text-primary text-center">{progressMsg}</p>}
                 {draftSavedMsg && <p className="text-sm text-green-600 text-center">{draftSavedMsg}</p>}
-                <Button onClick={finish} loading={finishing} className="w-full" size="lg">
+                <Button onClick={finish} loading={finishing} disabled={savingDraft} className="w-full" size="lg">
                   <FileText size={16} />
                   {editReportId ? `שמור שינויים והפק מחדש (${items.length})` : `סיום והפקת דוח (${items.length})`}
                 </Button>
                 {!editReportId && (
-                  <Button variant="outline" onClick={saveDraftNow} className="w-full">
+                  <Button variant="outline" onClick={saveDraftNow} loading={savingDraft} disabled={finishing} className="w-full">
                     <Save size={15} />
                     שמור טיוטה — המשך מאוחר יותר
                   </Button>
