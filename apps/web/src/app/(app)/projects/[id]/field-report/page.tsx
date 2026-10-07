@@ -147,6 +147,8 @@ export default function FieldReportPage() {
   const [isCustomRoom, setIsCustomRoom] = useState(false)
   const [customTitle, setCustomTitle] = useState('')
   const [finishing, setFinishing] = useState(false)
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [progressMsg, setProgressMsg] = useState('')
   const [resultReport, setResultReport] = useState<any>(null)
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -310,7 +312,29 @@ export default function FieldReportPage() {
     }
   }
 
+  // יציאה מהמסך באמצע העלאה קוטעת את השמירה/ההפקה — מזהירים לפני סגירה או רענון
+  useEffect(() => {
+    if (!finishing && !savingDraft) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [finishing, savingDraft])
+
   async function saveDraftNow() {
+    if (!reportType || savingDraft) return
+    setSavingDraft(true)
+    setErrorMsg('')
+    setDraftSavedMsg('')
+    setProgressMsg('שומר טיוטה ומעלה תמונות לענן... נא להישאר במסך')
+    try {
+      await saveDraftNowImpl()
+    } finally {
+      setSavingDraft(false)
+      setProgressMsg('')
+    }
+  }
+
+  async function saveDraftNowImpl() {
     if (!reportType) return
     // 1) שמירה מקומית קודם — עובדת תמיד, גם בלי אינטרנט, ומהווה רשת ביטחון
     const localDraft: FieldReportDraft = {
@@ -624,9 +648,11 @@ export default function FieldReportPage() {
   }
 
   async function finish() {
-    if (!reportType || items.length === 0) return
+    if (!reportType || items.length === 0 || finishing) return
     setFinishing(true)
     setErrorMsg('')
+    setDraftSavedMsg('')
+    setProgressMsg(`מעלה ${items.length} תמונות ומפיק את הדוח... זה יכול לקחת עד דקה, נא להישאר במסך`)
     try {
       if (reportType === 'DEFECTS') {
         await Promise.all(items.map(async (item) => {
@@ -750,6 +776,7 @@ export default function FieldReportPage() {
       setErrorMsg(err.message || 'שגיאה בהפקת הדוח')
     } finally {
       setFinishing(false)
+      setProgressMsg('')
     }
   }
 
@@ -1354,13 +1381,14 @@ export default function FieldReportPage() {
                   placeholder={`${typeInfo?.label} — שם הפרויקט`}
                 />
                 {errorMsg && <p className="text-sm text-danger">{errorMsg}</p>}
+                {progressMsg && <p className="text-sm text-primary text-center">{progressMsg}</p>}
                 {draftSavedMsg && <p className="text-sm text-green-600 text-center">{draftSavedMsg}</p>}
-                <Button onClick={finish} loading={finishing} className="w-full" size="lg">
+                <Button onClick={finish} loading={finishing} disabled={savingDraft} className="w-full" size="lg">
                   <FileText size={16} />
                   {editReportId ? `שמור שינויים והפק מחדש (${items.length})` : `סיום והפקת דוח (${items.length})`}
                 </Button>
                 {!editReportId && (
-                  <Button variant="outline" onClick={saveDraftNow} className="w-full">
+                  <Button variant="outline" onClick={saveDraftNow} loading={savingDraft} disabled={finishing} className="w-full">
                     <Save size={15} />
                     שמור טיוטה — המשך מאוחר יותר
                   </Button>
