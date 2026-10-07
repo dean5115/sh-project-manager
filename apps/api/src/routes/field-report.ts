@@ -39,6 +39,11 @@ const metadataSchema = z.object({
   electricityConnected: z.boolean().optional(),
   waterConnected: z.boolean().optional(),
   generalNotes: z.string().optional(),
+  // דוח פיקוח/מסירה — פרטי כותרת הדוח, ניתנים לעריכה גם אחרי הפקה
+  projectName: z.string().optional(),
+  projectAddress: z.string().optional(),
+  contractorName: z.string().optional(),
+  attendees: z.string().optional(),
 }).optional()
 
 const createSchema = z.object({
@@ -159,7 +164,7 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
 
     const pdfBuffer = body.type === 'HOME_INSPECTION'
       ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name, metadata: body.metadata })
-      : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name })
+      : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name, header: body.metadata })
 
     const filename = `report-${Date.now()}.pdf`
     const pdfUrl = await saveFile(pdfBuffer, filename, 'application/pdf')
@@ -238,7 +243,7 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
 
     const pdfBuffer = report.type === 'HOME_INSPECTION'
       ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name, metadata })
-      : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name })
+      : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name, header: metadata })
 
     const filename = `report-${Date.now()}.pdf`
     const pdfUrl = await saveFile(pdfBuffer, filename, 'application/pdf')

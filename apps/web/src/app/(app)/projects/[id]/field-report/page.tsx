@@ -133,6 +133,34 @@ interface PropertyDetails {
   waterConnected: boolean | null
   generalNotes: string
 }
+// דוח פיקוח/מסירה — פרטי כותרת הדוח (ריק = ברירת מחדל מהפרויקט/היום)
+interface ReportHeader {
+  visitDate: string
+  projectName: string
+  projectAddress: string
+  contractorName: string
+  attendees: string
+  generalNotes: string
+}
+const EMPTY_REPORT_HEADER: ReportHeader = {
+  visitDate: '', projectName: '', projectAddress: '', contractorName: '', attendees: '', generalNotes: '',
+}
+function headerFromMetadata(m: any): ReportHeader {
+  if (!m) return EMPTY_REPORT_HEADER
+  return {
+    visitDate: m.visitDate || '', projectName: m.projectName || '', projectAddress: m.projectAddress || '',
+    contractorName: m.contractorName || '', attendees: m.attendees || '', generalNotes: m.generalNotes || '',
+  }
+}
+
+// סדר המקצועות ברשימה ובדוח — זהה לסדר ב-CATEGORY_LABELS; ממצאים בלי מקצוע ("כללי") בסוף
+const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS)
+function categoryRank(c: string | undefined) {
+  const i = c ? CATEGORY_ORDER.indexOf(c) : -1
+  return i === -1 ? CATEGORY_ORDER.length : i
+}
+const TRADE_OPTIONS = [{ value: '', label: 'כללי (ללא מקצוע)' }, ...Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }))]
+
 const EMPTY_PROPERTY_DETAILS: PropertyDetails = {
   clientName: '', visitDate: '', propertyType: '', roomsIncluded: '', occupied: '',
   electricityConnected: null, waterConnected: null, generalNotes: '',
@@ -187,6 +215,10 @@ export default function FieldReportPage() {
   const [propertyDetails, setPropertyDetails] = useState<PropertyDetails>(EMPTY_PROPERTY_DETAILS)
   const [propertyDetailsOpen, setPropertyDetailsOpen] = useState(false)
 
+  // פרטי כותרת לדוח פיקוח/מסירה — ניתנים לעריכה בכל שלב, וגם אחרי הפקה דרך "ערוך"
+  const [reportHeader, setReportHeader] = useState<ReportHeader>(EMPTY_REPORT_HEADER)
+  const [headerOpen, setHeaderOpen] = useState(false)
+
   // draft state — טיוטה יכולה להיות מקומית (במכשיר, כולל תמונות כ-Blob) או מהענן
   // (רק photoId+photoUrl, כי התמונות כבר הועלו לשרת) — הענן מנצח אם הוא מעודכן יותר
   const [draftInfo, setDraftInfo] = useState<{ savedAt: number; count: number; type: ReportType; source: 'local' | 'cloud' } | null>(null)
@@ -203,6 +235,26 @@ export default function FieldReportPage() {
 
   const typeInfo = TYPES.find((t) => t.value === reportType)
   const isHomeInspection = reportType === 'HOME_INSPECTION'
+  // דוח פיקוח/מסירה — כותרת ניתנת לעריכה, מקצוע לכל ממצא ותמונות נוספות
+  const isFieldReport = reportType === 'INSPECTION' || reportType === 'HANDOVER'
+  const supportsExtraPhotos = isHomeInspection || isFieldReport
+
+  const { data: projectData } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => api.get<{ data: any }>(`/projects/${projectId}`),
+    enabled: !!projectId,
+    staleTime: 60_000,
+  })
+  const project = projectData?.data
+
+  // הרשימה במסך מסודרת לפי מקצוע — כמו בדוח עצמו
+  const displayItems = useMemo(() => {
+    if (!isFieldReport || !items.some((it) => it.category)) return items
+    return items.map((it, idx) => ({ it, idx }))
+      .sort((a, b) => categoryRank(a.it.category) - categoryRank(b.it.category) || a.idx - b.idx)
+      .map((x) => x.it)
+  }, [items, isFieldReport])
+  const groupByTrade = isFieldReport && items.some((it) => it.category)
 
   // ספריות תקנים/ממצאים נפוצים — נטענות רק עבור דוח בדק בית
   const { data: standardsData } = useQuery({
@@ -266,6 +318,7 @@ export default function FieldReportPage() {
           extraPhotos: (it.extraPhotos ?? []).map((ep: any) => ({ photoId: ep.photoId, previewUrl: absoluteUrl(ep.url), caption: ep.caption })),
         })))
         setPropertyDetails(r.metadata ? { ...EMPTY_PROPERTY_DETAILS, ...r.metadata } : EMPTY_PROPERTY_DETAILS)
+        setReportHeader(headerFromMetadata(r.metadata))
       })
       .catch((err: any) => setErrorMsg(err.message || 'טעינת הדוח לעריכה נכשלה'))
       .finally(() => setEditLoading(false))
@@ -307,6 +360,16 @@ export default function FieldReportPage() {
   }, [projectId])
 
   function metadataPayload() {
+    if (isFieldReport) {
+      return {
+        visitDate: reportHeader.visitDate || undefined,
+        projectName: reportHeader.projectName.trim() || undefined,
+        projectAddress: reportHeader.projectAddress.trim() || undefined,
+        contractorName: reportHeader.contractorName.trim() || undefined,
+        attendees: reportHeader.attendees.trim() || undefined,
+        generalNotes: reportHeader.generalNotes.trim() || undefined,
+      }
+    }
     if (!isHomeInspection) return undefined
     return {
       clientName: propertyDetails.clientName || undefined,
@@ -478,6 +541,7 @@ export default function FieldReportPage() {
         extraPhotos: (it.extraPhotos ?? []).map((ep: any) => ({ photoId: ep.photoId, previewUrl: absoluteUrl(ep.url), caption: ep.caption })),
       })))
       setPropertyDetails(cloudDraftMetadata ? { ...EMPTY_PROPERTY_DETAILS, ...cloudDraftMetadata } : EMPTY_PROPERTY_DETAILS)
+      setReportHeader(headerFromMetadata(cloudDraftMetadata))
     } else {
       const d = await loadDraft(projectId)
       if (!d) return
@@ -506,6 +570,7 @@ export default function FieldReportPage() {
         })),
       })))
       setPropertyDetails(d.metadata ? { ...EMPTY_PROPERTY_DETAILS, ...d.metadata } : EMPTY_PROPERTY_DETAILS)
+      setReportHeader(headerFromMetadata(d.metadata))
     }
     setPropertyDetailsOpen(false)
     setDraftInfo(null)
@@ -621,6 +686,10 @@ export default function FieldReportPage() {
         standardIds: pendingStandardIds.length ? pendingStandardIds : undefined,
         extraPhotos: pendingExtraPhotos.length ? pendingExtraPhotos : undefined,
       } : {}),
+      ...(isFieldReport ? {
+        category: pendingCategory || undefined,
+        extraPhotos: pendingExtraPhotos.length ? pendingExtraPhotos : undefined,
+      } : {}),
     }])
 
     // שמירת ממצא חדש כתבנית לשימוש עתידי — רק אם המשתמש ביקש וזה לא ממצא שכבר הגיע מהספרייה
@@ -649,6 +718,29 @@ export default function FieldReportPage() {
     setNewStandardOpen(false)
     setPlanDialogOpen(false)
     setActivePlan(null)
+  }
+
+  // עריכת ממצא קיים — מקצוע ותמונות נוספות מתעדכנים מיד ברשימה
+  function setItemCategory(id: string, category: string) {
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, category: category || undefined } : it)))
+  }
+
+  function addItemExtraPhoto(id: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const photo: ExtraPhoto = { file, previewUrl: URL.createObjectURL(file) }
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, extraPhotos: [...(it.extraPhotos ?? []), photo] } : it)))
+  }
+
+  function removeItemExtraPhoto(id: string, idx: number) {
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, extraPhotos: (it.extraPhotos ?? []).filter((_, i) => i !== idx) } : it)))
+  }
+
+  function updateItemExtraPhotoCaption(id: string, idx: number, caption: string) {
+    setItems((prev) => prev.map((it) => (it.id === id
+      ? { ...it, extraPhotos: (it.extraPhotos ?? []).map((ep, i) => (i === idx ? { ...ep, caption } : ep)) }
+      : it)))
   }
 
   function removeItem(id: string) {
@@ -755,7 +847,7 @@ export default function FieldReportPage() {
             recommendation: isHomeInspection ? (item.note || undefined) : undefined,
             title: isHomeInspection ? (item.title || undefined) : undefined,
             remark: isHomeInspection ? (item.remark || undefined) : undefined,
-            category: isHomeInspection ? (item.category || undefined) : undefined,
+            category: (isHomeInspection || isFieldReport) ? (item.category || undefined) : undefined,
             severity: isHomeInspection ? (item.severity || undefined) : undefined,
             standardIds: isHomeInspection ? item.standardIds : undefined,
             extraPhotos,
@@ -819,6 +911,8 @@ export default function FieldReportPage() {
     setSaveAsTemplate(false)
     setNewStandardOpen(false)
     setPropertyDetails(EMPTY_PROPERTY_DETAILS)
+    setReportHeader(EMPTY_REPORT_HEADER)
+    setHeaderOpen(false)
     setPropertyDetailsOpen(false)
   }
 
@@ -909,6 +1003,11 @@ export default function FieldReportPage() {
                     ערוך פרטי נכס
                   </button>
                 )}
+                {isFieldReport && !headerOpen && (
+                  <button onClick={() => setHeaderOpen(true)} className="text-xs text-primary hover:underline">
+                    ערוך כותרת הדוח
+                  </button>
+                )}
                 {editReportId ? (
                   <button onClick={() => router.push(`/reports?project=${projectId}`)} className="text-xs text-gray-400 hover:text-danger">
                     בטל עריכה
@@ -918,6 +1017,57 @@ export default function FieldReportPage() {
                 )}
               </div>
             </div>
+
+            {/* כותרת הדוח — דוח פיקוח/מסירה; שדה ריק = ברירת המחדל שמוצגת בו */}
+            {isFieldReport && headerOpen && (
+              <div className="card space-y-3">
+                <h3 className="font-semibold text-neutral-dark text-sm">כותרת הדוח</h3>
+                <Input
+                  label="כותרת"
+                  value={customTitle}
+                  onChange={(e) => setCustomTitle(e.target.value)}
+                  placeholder={`${typeInfo?.label} — ${project?.name || 'שם הפרויקט'}`}
+                />
+                <Input
+                  label="תאריך הביקור"
+                  type="date"
+                  value={reportHeader.visitDate}
+                  onChange={(e) => setReportHeader((h) => ({ ...h, visitDate: e.target.value }))}
+                />
+                <Input
+                  label="שם הפרויקט בדוח"
+                  value={reportHeader.projectName}
+                  onChange={(e) => setReportHeader((h) => ({ ...h, projectName: e.target.value }))}
+                  placeholder={project?.name || ''}
+                />
+                <Input
+                  label="כתובת"
+                  value={reportHeader.projectAddress}
+                  onChange={(e) => setReportHeader((h) => ({ ...h, projectAddress: e.target.value }))}
+                  placeholder={project?.address || ''}
+                />
+                <Input
+                  label="קבלן מבצע"
+                  value={reportHeader.contractorName}
+                  onChange={(e) => setReportHeader((h) => ({ ...h, contractorName: e.target.value }))}
+                />
+                <Input
+                  label="נוכחים בסיור"
+                  value={reportHeader.attendees}
+                  onChange={(e) => setReportHeader((h) => ({ ...h, attendees: e.target.value }))}
+                  placeholder="למשל: מנהל עבודה, נציג היזם"
+                />
+                <Textarea
+                  label="הערות כלליות (יופיעו בראש הדוח)"
+                  value={reportHeader.generalNotes}
+                  onChange={(e) => setReportHeader((h) => ({ ...h, generalNotes: e.target.value }))}
+                />
+                <Button onClick={() => setHeaderOpen(false)} className="w-full">
+                  <Check size={14} />
+                  סיום עריכת כותרת
+                </Button>
+              </div>
+            )}
 
             {/* פרטי מזמין/ביקור/נכס — נלכדים פעם אחת לדוח, לפני תיעוד הממצאים */}
             {isHomeInspection && propertyDetailsOpen ? (
@@ -1023,8 +1173,18 @@ export default function FieldReportPage() {
                   />
                 )}
 
-                {/* תמונות נוספות לאותו ממצא — דוח בדק בית בלבד */}
-                {isHomeInspection && (
+                {/* מקצוע — דוח פיקוח/מסירה; הדוח מסודר לפי מקצועות */}
+                {isFieldReport && (
+                  <Select
+                    label="מקצוע"
+                    value={pendingCategory}
+                    onChange={(e) => setPendingCategory(e.target.value)}
+                    options={TRADE_OPTIONS}
+                  />
+                )}
+
+                {/* תמונות נוספות לאותו ממצא */}
+                {supportsExtraPhotos && (
                   <div>
                     <p className="text-xs font-medium text-gray-500 mb-2">תמונות נוספות לממצא זה (אופציונלי)</p>
                     <div className="space-y-2">
@@ -1300,8 +1460,14 @@ export default function FieldReportPage() {
                     דוח עם הרבה תמונות (25+) עלול להיכשל בהפקה. מומלץ לסיים ולהפיק את הדוח הנוכחי, ולפתוח דוח שטח נוסף להמשך התיעוד.
                   </div>
                 )}
-                {items.map((item) => (
-                  <div key={item.id} className="card space-y-2">
+                {displayItems.map((item, idx) => (
+                  <div key={item.id} className="space-y-2">
+                  {groupByTrade && (idx === 0 || (displayItems[idx - 1].category || '') !== (item.category || '')) && (
+                    <p className="text-sm font-semibold text-primary pt-2 border-b border-primary/20 pb-1">
+                      {item.category ? CATEGORY_LABELS[item.category] || item.category : 'כללי'}
+                    </p>
+                  )}
+                  <div className="card space-y-2">
                     <div className="flex items-center gap-3">
                       <div className="relative shrink-0">
                         <img src={item.previewUrl} className="w-16 h-16 object-cover rounded-lg" />
@@ -1316,6 +1482,11 @@ export default function FieldReportPage() {
                           {item.room && (
                             <span className="text-xs bg-primary-50 text-primary px-2 py-0.5 rounded-full">
                               {item.room}
+                            </span>
+                          )}
+                          {isFieldReport && !groupByTrade && item.category && (
+                            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                              {CATEGORY_LABELS[item.category] || item.category}
                             </span>
                           )}
                           {item.severity && (
@@ -1369,6 +1540,40 @@ export default function FieldReportPage() {
                             placeholder="הערה נוספת..."
                           />
                         )}
+                        {isFieldReport && (
+                          <Select
+                            label="מקצוע"
+                            value={item.category || ''}
+                            onChange={(e) => setItemCategory(item.id, e.target.value)}
+                            options={TRADE_OPTIONS}
+                          />
+                        )}
+                        {supportsExtraPhotos && (
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 mb-2">תמונות נוספות לממצא</p>
+                            <div className="space-y-2">
+                              {(item.extraPhotos ?? []).map((ep, i) => (
+                                <div key={i} className="flex items-center gap-2">
+                                  <img src={ep.previewUrl} className="w-12 h-12 object-cover rounded-lg shrink-0" />
+                                  <input
+                                    value={ep.caption || ''}
+                                    onChange={(e) => updateItemExtraPhotoCaption(item.id, i, e.target.value)}
+                                    placeholder="כיתוב לתמונה..."
+                                    className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-primary"
+                                  />
+                                  <button onClick={() => removeItemExtraPhoto(item.id, i)} className="p-1.5 text-gray-400 hover:text-danger shrink-0">
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                              ))}
+                              <label className="flex items-center justify-center gap-2 py-2 rounded-lg border-2 border-dashed border-gray-300 cursor-pointer hover:border-primary/40 transition-colors text-xs text-gray-500">
+                                <Plus size={14} />
+                                הוסף תמונה
+                                <input type="file" accept="image/*" className="hidden" onChange={(e) => addItemExtraPhoto(item.id, e)} />
+                              </label>
+                            </div>
+                          </div>
+                        )}
                         <div className="flex gap-2">
                           <Button size="sm" onClick={saveEditNote} className="flex-1">
                             <Check size={13} />
@@ -1381,18 +1586,27 @@ export default function FieldReportPage() {
                       </div>
                     )}
                   </div>
+                  </div>
                 ))}
               </div>
             )}
 
             {items.length > 0 && (
               <div className="card space-y-3">
-                <Input
-                  label="כותרת מותאמת (אופציונלי)"
-                  value={customTitle}
-                  onChange={(e) => setCustomTitle(e.target.value)}
-                  placeholder={`${typeInfo?.label} — שם הפרויקט`}
-                />
+                {isFieldReport ? (
+                  <button onClick={() => { setHeaderOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="w-full text-right text-sm border border-gray-200 rounded-lg px-3 py-2.5 hover:border-primary/40">
+                    <span className="text-xs text-gray-500 block">כותרת הדוח</span>
+                    <span className="text-neutral-dark">{customTitle || `${typeInfo?.label} — ${project?.name || 'שם הפרויקט'}`}</span>
+                    <span className="text-xs text-primary block mt-0.5">לחץ לעריכת הכותרת והפרטים</span>
+                  </button>
+                ) : (
+                  <Input
+                    label="כותרת מותאמת (אופציונלי)"
+                    value={customTitle}
+                    onChange={(e) => setCustomTitle(e.target.value)}
+                    placeholder={`${typeInfo?.label} — שם הפרויקט`}
+                  />
+                )}
                 {errorMsg && <p className="text-sm text-danger">{errorMsg}</p>}
                 {progressMsg && <p className="text-sm text-primary text-center">{progressMsg}</p>}
                 {draftSavedMsg && <p className="text-sm text-green-600 text-center">{draftSavedMsg}</p>}

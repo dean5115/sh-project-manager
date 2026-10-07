@@ -297,12 +297,22 @@ async function generatePdfImpl(options: PdfOptions): Promise<Buffer> {
   }
 }
 
+interface FieldReportHeader {
+  visitDate?: string
+  projectName?: string
+  projectAddress?: string
+  contractorName?: string
+  attendees?: string
+  generalNotes?: string
+}
+
 interface FieldReportOptions {
   title: string
   project: any
-  items: { photoUrl: string; note: string; planUrl?: string }[]
+  items: { photoUrl: string; note: string; planUrl?: string; category?: string; extraPhotos?: { url: string; caption?: string }[] }[]
   branding?: Branding
   generatedByName?: string
+  header?: FieldReportHeader
 }
 
 export function generateFieldReportPdf(options: FieldReportOptions): Promise<Buffer> {
@@ -310,21 +320,42 @@ export function generateFieldReportPdf(options: FieldReportOptions): Promise<Buf
 }
 
 async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<Buffer> {
-  const { title, project, items, branding, generatedByName } = options
+  const { title, project, branding, generatedByName, header } = options
   const color = branding?.primaryColor || '#1B4F72'
-  const now = new Date().toLocaleDateString('he-IL')
+  const now = header?.visitDate ? new Date(header.visitDate).toLocaleDateString('he-IL') : new Date().toLocaleDateString('he-IL')
   const orgName = project.organization?.name || 'SH - Project Manager'
+
+  // מסדרים לפי מקצוע (סדר קבוע), ובתוך כל מקצוע לפי סדר התיעוד בשטח
+  const grouped = options.items.some((it) => it.category)
+  const items = grouped
+    ? options.items.map((it, idx) => ({ it, idx })).sort((a, b) => categoryRank(a.it.category) - categoryRank(b.it.category) || a.idx - b.idx).map((x) => x.it)
+    : options.items
 
   // ברצף ולא במקביל — עם 20+ ממצאים, עיבוד כל התמונות בו-זמנית מציף את זיכרון השרת ומקריס אותו
   const itemsHtmlParts: string[] = []
+  let currentCategory: string | null = null
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
+    if (grouped) {
+      const cat = item.category || ''
+      if (cat !== currentCategory) {
+        currentCategory = cat
+        const count = items.filter((x) => (x.category || '') === cat).length
+        itemsHtmlParts.push(`<h2 class="trade-heading">${esc(cat ? categoryLabel(cat) : 'כללי')} <span class="trade-count">(${count})</span></h2>`)
+      }
+    }
     const src = await photoToBase64(item.photoUrl)
     const planSrc = item.planUrl ? await photoToBase64(item.planUrl) : null
+    const extraParts: string[] = []
+    for (const ep of item.extraPhotos ?? []) {
+      const epSrc = await photoToBase64(ep.url)
+      if (epSrc) extraParts.push(`<figure class="field-extra"><img src="${epSrc}" />${ep.caption ? `<figcaption>${esc(ep.caption)}</figcaption>` : ''}</figure>`)
+    }
     itemsHtmlParts.push(`
       <div class="field-item">
         <div class="field-item-num">${i + 1}</div>
         ${src ? `<img class="field-item-photo" src="${src}" />` : ''}
+        ${extraParts.length ? `<div class="field-extras">${extraParts.join('')}</div>` : ''}
         <div class="field-item-note">${esc(item.note)}</div>
         ${planSrc ? `
           <div class="field-item-plan-label">מיקום על תוכנית:</div>
@@ -334,6 +365,9 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
     `)
   }
   const itemsHtml = itemsHtmlParts.join('')
+
+  const headerRow = (label: string, value?: string) =>
+    value?.trim() ? `<div class="project-address"><b>${esc(label)}:</b> ${esc(value)}</div>` : ''
 
   const html = `
     <!DOCTYPE html>
@@ -355,6 +389,13 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
         .field-item-plan-label { font-size: 11px; font-weight: bold; color: ${color}; margin: 10px 0 4px; }
         .field-item-plan { width: 100%; max-height: 300px; object-fit: contain; border-radius: 8px; display: block; background: #f8f9fa; border: 1px solid #eee; }
         .summary { font-size: 11px; color: #666; margin-bottom: 14px; }
+        .field-extras { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .field-extra { margin: 0; width: calc(50% - 4px); page-break-inside: avoid; }
+        .field-extra img { width: 100%; height: 190px; object-fit: contain; border-radius: 8px; background: #f8f9fa; display: block; }
+        .field-extra figcaption { font-size: 10px; color: #555; margin-top: 3px; text-align: center; }
+        .trade-heading { font-size: 16px; color: ${color}; border-bottom: 2px solid ${color}; padding-bottom: 4px; margin: 22px 0 12px; page-break-after: avoid; }
+        .trade-count { font-size: 12px; color: #888; font-weight: normal; }
+        .general-notes { font-size: 12px; line-height: 1.5; white-space: pre-wrap; background: #f8f9fa; border-radius: 8px; padding: 10px 12px; margin: 8px 0 14px; }
         .signoff { margin-top: 30px; padding-top: 18px; border-top: 1px solid #eee; font-size: 13px; line-height: 1.6; page-break-inside: avoid; }
         .signoff .name { font-weight: bold; color: ${color}; }
       </style>
@@ -364,9 +405,12 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
       <div class="doc-date">${esc(now)}</div>
 
       <h1>${esc(title)}</h1>
-      <div class="project-name">פרויקט: ${esc(project.name)}</div>
-      <div class="project-address">כתובת: ${esc(project.address)}</div>
+      <div class="project-name">פרויקט: ${esc(header?.projectName?.trim() || project.name)}</div>
+      <div class="project-address">כתובת: ${esc(header?.projectAddress?.trim() || project.address)}</div>
+      ${headerRow('קבלן מבצע', header?.contractorName)}
+      ${headerRow('נוכחים', header?.attendees)}
       <div class="summary">סך הכל ${items.length} ממצאים תועדו</div>
+      ${header?.generalNotes?.trim() ? `<div class="general-notes">${esc(header.generalNotes)}</div>` : ''}
       <hr class="divider" />
 
       ${itemsHtml}
@@ -835,7 +879,15 @@ async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> 
 }
 
 function severityLabel(s: string) { return { LOW: 'נמוכה', MEDIUM: 'בינונית', HIGH: 'גבוהה', CRITICAL: 'קריטי' }[s] || s }
-function categoryLabel(c: string) { return { STRUCTURE: 'שלד', CONCRETE: 'בטון', IRON: 'ברזל', WATERPROOFING: 'איטום', PLUMBING: 'אינסטלציה', ELECTRICAL: 'חשמל', HVAC: 'מיזוג', DRYWALL: 'גבס', FLOORING: 'ריצוף', CLADDING: 'חיפוי', PAINT: 'צבע', ALUMINUM: 'אלומיניום', CARPENTRY: 'נגרות', METALWORK: 'מסגרות', SAFETY: 'בטיחות', LANDSCAPING: 'פיתוח', DOOR_ENTRANCE: 'דלת כניסה', INTERIOR_DOORS_POLYMER: 'דלתות פנים - פולימריות', CLEANING: 'ניקיון', SAFE_ROOM_METALWORK: 'מסגרות-ממ"ד', ACCESSIBILITY_SIGNAGE: 'נגישות/שילוט/סימון', PLASTER_PAINT_WORK: 'עבודות טיח וצבע', ELECTRICAL_SAFETY_FIXTURES: 'אביזרי חשמל ותקשורת/בטיחות', OTHER: 'אחר' }[c] || c }
+// סדר המפתחות = סדר המקצועות בדוח (בערך לפי שלבי הביצוע)
+const CATEGORY_LABELS: Record<string, string> = { STRUCTURE: 'שלד', CONCRETE: 'בטון', IRON: 'ברזל', WATERPROOFING: 'איטום', PLUMBING: 'אינסטלציה', ELECTRICAL: 'חשמל', HVAC: 'מיזוג', DRYWALL: 'גבס', FLOORING: 'ריצוף', CLADDING: 'חיפוי', PAINT: 'צבע', ALUMINUM: 'אלומיניום', CARPENTRY: 'נגרות', METALWORK: 'מסגרות', SAFETY: 'בטיחות', LANDSCAPING: 'פיתוח', DOOR_ENTRANCE: 'דלת כניסה', INTERIOR_DOORS_POLYMER: 'דלתות פנים - פולימריות', CLEANING: 'ניקיון', SAFE_ROOM_METALWORK: 'מסגרות-ממ"ד', ACCESSIBILITY_SIGNAGE: 'נגישות/שילוט/סימון', PLASTER_PAINT_WORK: 'עבודות טיח וצבע', ELECTRICAL_SAFETY_FIXTURES: 'אביזרי חשמל ותקשורת/בטיחות', OTHER: 'אחר' }
+const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS)
+function categoryLabel(c: string) { return CATEGORY_LABELS[c] || c }
+// ממצאים בלי מקצוע ("כללי") — בסוף הדוח
+function categoryRank(c: string | undefined) {
+  const i = c ? CATEGORY_ORDER.indexOf(c) : -1
+  return i === -1 ? CATEGORY_ORDER.length : i
+}
 function defectStatusLabel(s: string) { return { OPEN: 'פתוח', IN_PROGRESS: 'בטיפול', FIXED: 'תוקן', VERIFIED: 'אומת', CLOSED: 'סגור' }[s] || s }
 function priorityLabel(p: string) { return { LOW: 'נמוכה', MEDIUM: 'רגילה', HIGH: 'גבוהה', CRITICAL: 'קריטי' }[p] || p }
 function taskStatusLabel(s: string) { return { OPEN: 'פתוח', IN_PROGRESS: 'בביצוע', PENDING_APPROVAL: 'ממתין לאישור', DONE: 'הושלם', CANCELLED: 'בוטל' }[s] || s }
