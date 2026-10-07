@@ -11,7 +11,8 @@ import { Modal } from '@/components/ui/modal'
 import { FileText, Download, Plus, CheckCircle2, Trash2, Pencil } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatDateTime } from '@/lib/utils'
+import { loadDraft } from '@/lib/field-report-draft'
 import { useState } from 'react'
 
 const REPORT_TYPES = [
@@ -88,6 +89,25 @@ export default function ReportsPage() {
     enabled: !!selectedProject,
   })
 
+  // טיוטת דוח שטח שנשמרה ("שמור טיוטה") אינה דוח מופק — מציגים אותה כאן כדי שיהיה ברור שהיא קיימת ואיך ממשיכים
+  const { data: draft } = useQuery({
+    queryKey: ['field-report-draft-summary', selectedProject],
+    queryFn: async () => {
+      const [cloudRes, local] = await Promise.all([
+        api.get<{ data: any }>(`/projects/${selectedProject}/field-report-draft`).catch(() => null),
+        loadDraft(selectedProject).catch(() => null),
+      ])
+      const cloud = cloudRes?.data
+      const cloudTime = cloud?.items?.length ? new Date(cloud.updatedAt).getTime() : 0
+      const localTime = local?.items?.length ? local.savedAt : 0
+      if (!cloudTime && !localTime) return null
+      return cloudTime >= localTime
+        ? { type: cloud.type as string, count: cloud.items.length as number, savedAt: cloudTime }
+        : { type: local!.reportType as string, count: local!.items.length, savedAt: localTime }
+    },
+    enabled: !!selectedProject,
+  })
+
   const generateMutation = useMutation({
     mutationFn: (d: typeof form) => api.post<{ data: any }>('/reports/generate', d),
     onSuccess: () => {
@@ -125,6 +145,24 @@ export default function ReportsPage() {
             הפק דוח חדש
           </Button>
         </div>
+
+        {selectedProject && draft && (
+          <div className="card flex items-center gap-3 border-2 border-dashed border-amber-300 bg-amber-50">
+            <span className="text-2xl shrink-0">📝</span>
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-sm text-neutral-dark">
+                טיוטה שמורה — {ALL_REPORT_TYPES.find((t) => t.value === draft.type)?.label || 'דוח שטח'} ({draft.count} ממצאים)
+              </p>
+              <p className="text-xs text-gray-500">נשמרה {formatDateTime(new Date(draft.savedAt))} · עדיין לא הופקה כדוח</p>
+            </div>
+            <Link href={`/projects/${selectedProject}/field-report`}>
+              <Button size="sm">
+                <Pencil size={14} />
+                המשך והפק דוח
+              </Button>
+            </Link>
+          </div>
+        )}
 
         {selectedProject && (
           <div className="space-y-3">
