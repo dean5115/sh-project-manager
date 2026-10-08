@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
-import { FileText, Download, Plus, CheckCircle2, Trash2, Pencil } from 'lucide-react'
+import { FileText, Download, Plus, CheckCircle2, Trash2, Pencil, FolderInput, X } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { formatDate, formatDateTime } from '@/lib/utils'
@@ -63,12 +63,20 @@ const ALL_REPORT_TYPES = [...REPORT_TYPES, HOME_INSPECTION_TYPE]
 // לכן מפנים אותם ל-flow "דוח שטח" של הפרויקט
 const FIELD_REPORT_TYPES = ['INSPECTION', 'HANDOVER']
 
+// דוחות שטח שנשמרו עם הממצאים (sourceItems) — אפשר לערוך אותם ולהעביר לפרויקט אחר
+function isEditableFieldReport(report: any) {
+  return ['INSPECTION', 'HANDOVER', 'HOME_INSPECTION'].includes(report.type) && !!report.sourceItems
+}
+
 export default function ReportsPage() {
   const qc = useQueryClient()
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState({ projectId: '', type: 'DAILY', title: '', dateFrom: '', dateTo: '' })
   const [deleteTarget, setDeleteTarget] = useState<any>(null)
+  const [moveTarget, setMoveTarget] = useState<any>(null)
+  const [moveTo, setMoveTo] = useState('')
+  const [movedNotice, setMovedNotice] = useState<{ title: string; projectId: string; projectName: string } | null>(null)
 
   const [selectedProject, setSelectedProject] = useState('')
 
@@ -126,6 +134,27 @@ export default function ReportsPage() {
     },
   })
 
+  const moveMutation = useMutation({
+    mutationFn: () => api.post<{ data: any }>(`/projects/${selectedProject}/field-report/${moveTarget.id}/move`, { targetProjectId: moveTo }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['reports', selectedProject] })
+      qc.invalidateQueries({ queryKey: ['reports', moveTo] })
+      setMovedNotice({
+        title: res.data.title,
+        projectId: moveTo,
+        projectName: (projects?.data ?? []).find((p: any) => p.id === moveTo)?.name || '',
+      })
+      setMoveTarget(null)
+      setMoveTo('')
+    },
+  })
+
+  function openMove(report: any) {
+    moveMutation.reset()
+    setMoveTo('')
+    setMoveTarget(report)
+  }
+
   const projectOptions = (projects?.data ?? []).map((p: any) => ({ value: p.id, label: p.name }))
   const selectedType = REPORT_TYPES.find((t) => t.value === form.type)
   const isFieldReportType = FIELD_REPORT_TYPES.includes(form.type)
@@ -137,7 +166,7 @@ export default function ReportsPage() {
           <Select
             options={[{ value: '', label: 'בחר פרויקט לצפייה בדוחות...' }, ...projectOptions]}
             value={selectedProject}
-            onChange={(e) => setSelectedProject(e.target.value)}
+            onChange={(e) => { setSelectedProject(e.target.value); setMovedNotice(null) }}
             placeholder=""
           />
           <Button size="sm" onClick={() => { generateMutation.reset(); setForm((f) => ({ ...f, projectId: selectedProject })); setOpen(true) }}>
@@ -145,6 +174,21 @@ export default function ReportsPage() {
             הפק דוח חדש
           </Button>
         </div>
+
+        {movedNotice && (
+          <div className="card flex flex-wrap items-center gap-3 bg-green-50 border border-green-200">
+            <CheckCircle2 size={18} className="text-green-600 shrink-0" />
+            <p className="flex-1 min-w-0 text-sm text-green-800">
+              הדוח <strong>{movedNotice.title}</strong> הועבר לפרויקט <strong>{movedNotice.projectName}</strong>
+            </p>
+            <Button size="sm" variant="outline" onClick={() => { setSelectedProject(movedNotice.projectId); setMovedNotice(null) }}>
+              עבור לפרויקט
+            </Button>
+            <button onClick={() => setMovedNotice(null)} aria-label="סגור" className="p-1 text-green-700 hover:text-green-900">
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {selectedProject && draft && (
           <div className="card flex items-center gap-3 border-2 border-dashed border-amber-300 bg-amber-50">
@@ -176,34 +220,45 @@ export default function ReportsPage() {
               (reports?.data ?? []).map((report: any) => {
                 const rt = ALL_REPORT_TYPES.find((t) => t.value === report.type)
                 return (
-                  <div key={report.id} className="card flex items-center gap-3">
-                    <span className="text-2xl shrink-0">{rt?.icon || '📄'}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm text-neutral-dark truncate">{report.title}</p>
-                      <p className="text-xs text-gray-400">{formatDate(report.createdAt)}</p>
+                  // בטלפון: שם הדוח בשורה אחת והכפתורים מתחתיו, כדי שהשם לא יידחס
+                  <div key={report.id} className="card flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <span className="text-2xl shrink-0">{rt?.icon || '📄'}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm text-neutral-dark truncate">{report.title}</p>
+                        <p className="text-xs text-gray-400">{formatDate(report.createdAt)}</p>
+                      </div>
+                      <Badge className="bg-primary-50 text-primary shrink-0 hidden sm:inline-flex">
+                        {rt?.label}
+                      </Badge>
                     </div>
-                    <Badge className="bg-primary-50 text-primary shrink-0 hidden sm:inline-flex">
-                      {rt?.label}
-                    </Badge>
-                    {(report.type === 'INSPECTION' || report.type === 'HANDOVER' || report.type === 'HOME_INSPECTION') && report.sourceItems && (
-                      <Link href={`/projects/${selectedProject}/field-report?edit=${report.id}`}>
-                        <Button variant="outline" size="sm">
-                          <Pencil size={14} />
-                          ערוך
+                    <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                      {isEditableFieldReport(report) && (
+                        <Link href={`/projects/${selectedProject}/field-report?edit=${report.id}`}>
+                          <Button variant="outline" size="sm">
+                            <Pencil size={14} />
+                            ערוך
+                          </Button>
+                        </Link>
+                      )}
+                      {isEditableFieldReport(report) && projectOptions.length > 1 && (
+                        <Button variant="outline" size="sm" onClick={() => openMove(report)}>
+                          <FolderInput size={14} />
+                          העבר
                         </Button>
-                      </Link>
-                    )}
-                    {report.pdfUrl && (
-                      <a href={report.pdfUrl} download target="_blank" rel="noreferrer">
-                        <Button variant="outline" size="sm">
-                          <Download size={14} />
-                          הורד
-                        </Button>
-                      </a>
-                    )}
-                    <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(report)}>
-                      <Trash2 size={14} className="text-danger" />
-                    </Button>
+                      )}
+                      {report.pdfUrl && (
+                        <a href={report.pdfUrl} download target="_blank" rel="noreferrer">
+                          <Button variant="outline" size="sm">
+                            <Download size={14} />
+                            הורד
+                          </Button>
+                        </a>
+                      )}
+                      <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(report)} aria-label="מחק דוח">
+                        <Trash2 size={14} className="text-danger" />
+                      </Button>
+                    </div>
                   </div>
                 )
               })
@@ -323,6 +378,41 @@ export default function ReportsPage() {
               </Button>
             )}
             <Button variant="outline" onClick={() => setOpen(false)}>ביטול</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!moveTarget}
+        onClose={() => { if (!moveMutation.isPending) setMoveTarget(null) }}
+        title="העברת דוח לפרויקט אחר"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            להעביר את הדוח <strong>{moveTarget?.title}</strong> לפרויקט:
+          </p>
+          <Select
+            value={moveTo}
+            onChange={(e) => setMoveTo(e.target.value)}
+            options={[{ value: '', label: 'בחר פרויקט...' }, ...projectOptions.filter((p) => p.value !== selectedProject)]}
+            placeholder=""
+          />
+          <div className="bg-blue-50 rounded-xl p-3 text-xs text-blue-700 space-y-1">
+            <p>הדוח והתמונות שלו יעברו לפרויקט שתבחר, וקובץ ה-PDF יופק מחדש עם שם הפרויקט החדש והכתובת שלו.</p>
+            <p>ההעברה יכולה לקחת עד דקה — נא להישאר במסך.</p>
+          </div>
+          {moveMutation.isError && (
+            <p className="text-sm text-danger">
+              ההעברה נכשלה: {(moveMutation.error as Error)?.message || 'שגיאה לא ידועה'}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button onClick={() => moveMutation.mutate()} loading={moveMutation.isPending} disabled={!moveTo}>
+              <FolderInput size={14} />
+              העבר דוח
+            </Button>
+            <Button variant="outline" onClick={() => setMoveTarget(null)} disabled={moveMutation.isPending}>ביטול</Button>
           </div>
         </div>
       </Modal>
