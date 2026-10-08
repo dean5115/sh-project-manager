@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authenticate } from '../middleware/auth'
 import { generateFieldReportPdf, generateHomeInspectionPdf } from '../services/pdf.service'
-import { getOrgBranding } from '../services/branding'
+import { getOrgBranding, applyReportLogo } from '../services/branding'
 import { saveFile, deleteFile } from '../services/storage'
 import { z } from 'zod'
 
@@ -44,6 +44,14 @@ const metadataSchema = z.object({
   projectAddress: z.string().optional(),
   contractorName: z.string().optional(),
   attendees: z.string().optional(),
+  // מיתוג וחתימה לדוח זה — ריק = פרטי הארגון מההגדרות
+  logoMode: z.enum(['org', 'custom', 'none']).optional(),
+  logoUrl: z.string().optional(),
+  companyName: z.string().optional(),
+  footerText: z.string().optional(),
+  signerName: z.string().optional(),
+  signerTitle: z.string().optional(),
+  signerPhone: z.string().optional(),
 }).optional()
 
 const createSchema = z.object({
@@ -164,7 +172,10 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
 
     const pdfBuffer = body.type === 'HOME_INSPECTION'
       ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name, metadata: body.metadata })
-      : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name, header: body.metadata })
+      : await generateFieldReportPdf({
+          title, project, items, generatedByName: user?.name, header: body.metadata,
+          branding: await applyReportLogo(branding, body.metadata, request.user.organizationId),
+        })
 
     const filename = `report-${Date.now()}.pdf`
     const pdfUrl = await saveFile(pdfBuffer, filename, 'application/pdf')
@@ -243,7 +254,10 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
 
     const pdfBuffer = report.type === 'HOME_INSPECTION'
       ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name, metadata })
-      : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name, header: metadata })
+      : await generateFieldReportPdf({
+          title, project, items, generatedByName: user?.name, header: metadata,
+          branding: await applyReportLogo(branding, metadata, request.user.organizationId),
+        })
 
     const filename = `report-${Date.now()}.pdf`
     const pdfUrl = await saveFile(pdfBuffer, filename, 'application/pdf')

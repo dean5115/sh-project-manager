@@ -155,6 +155,15 @@ function footerHtml(branding: Branding | undefined, orgName: string, extra?: str
   `
 }
 
+// כותרת תחתונה בטקסט חופשי שהוגדר לדוח מסוים — באותו עיצוב כמו footerHtml
+function footerLineHtml(text: string): string {
+  return `
+    <div style="width:100%; font-size:8px; color:#999; text-align:center; direction:rtl; font-family:Arial,sans-serif; padding:0 40px;">
+      ${esc(text)}
+    </div>
+  `
+}
+
 export function generatePdf(options: PdfOptions): Promise<Buffer> {
   return enqueuePdf(() => generatePdfImpl(options))
 }
@@ -304,6 +313,11 @@ interface FieldReportHeader {
   contractorName?: string
   attendees?: string
   generalNotes?: string
+  companyName?: string
+  footerText?: string
+  signerName?: string
+  signerTitle?: string
+  signerPhone?: string
 }
 
 interface FieldReportOptions {
@@ -324,6 +338,15 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
   const color = branding?.primaryColor || '#1B4F72'
   const now = header?.visitDate ? new Date(header.visitDate).toLocaleDateString('he-IL') : new Date().toLocaleDateString('he-IL')
   const orgName = project.organization?.name || 'SH - Project Manager'
+  // שם עסק אחר לדוח הזה — במקרה כזה לא מציגים את הסלוגן ופרטי הקשר של הארגון, שלא שייכים לו
+  const customBrand = header?.companyName?.trim()
+  const brandName = customBrand || orgName
+  const letterheadBranding = branding && customBrand ? { ...branding, tagline: undefined } : branding
+  const signerName = header?.signerName?.trim() || generatedByName || brandName
+  const signerPhone = header?.signerPhone?.trim() || (!customBrand && generatedByName ? branding?.phone : undefined)
+  const footer = header?.footerText?.trim()
+    ? footerLineHtml(header.footerText.trim())
+    : footerHtml(customBrand ? undefined : branding, brandName)
 
   // מסדרים לפי מקצוע (סדר קבוע), ובתוך כל מקצוע לפי סדר התיעוד בשטח
   const grouped = options.items.some((it) => it.category)
@@ -401,7 +424,7 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
       </style>
     </head>
     <body>
-      ${letterheadHtml(branding, orgName)}
+      ${letterheadHtml(letterheadBranding, brandName)}
       <div class="doc-date">${esc(now)}</div>
 
       <h1>${esc(title)}</h1>
@@ -417,8 +440,9 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
 
       <div class="signoff">
         <div>בברכה,</div>
-        <div class="name">${esc(generatedByName || orgName)}</div>
-        ${generatedByName && branding?.phone ? `<div>${esc(branding.phone)}</div>` : ''}
+        <div class="name">${esc(signerName)}</div>
+        ${header?.signerTitle?.trim() ? `<div>${esc(header.signerTitle.trim())}</div>` : ''}
+        ${signerPhone ? `<div>${esc(signerPhone)}</div>` : ''}
       </div>
     </body>
     </html>
@@ -434,7 +458,7 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
       margin: { top: '0', bottom: '46px', left: '0', right: '0' },
       displayHeaderFooter: true,
       headerTemplate: '<span></span>',
-      footerTemplate: footerHtml(branding, orgName),
+      footerTemplate: footer,
     })
     return Buffer.from(pdfBuffer)
   } finally {

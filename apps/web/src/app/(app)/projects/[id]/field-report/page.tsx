@@ -9,7 +9,7 @@ import { Select } from '@/components/ui/select'
 import {
   Camera, Trash2, ArrowRight, AlertTriangle, Search, ClipboardCheck, ClipboardList,
   Check, X, Download, MessageCircle, Mail, FileText, MapPin, Map, Save, Pencil, PenLine,
-  Plus, BookMarked, ChevronDown,
+  Plus, BookMarked, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
@@ -18,6 +18,7 @@ import { PlanPinPicker } from '@/components/pdf/plan-pin-picker'
 import { PhotoAnnotator } from '@/components/photo/photo-annotator'
 import { generateAnnotatedPlanImage } from '@/lib/plan-annotation'
 import { saveDraft, loadDraft, deleteDraft, type FieldReportDraft } from '@/lib/field-report-draft'
+import { useAuthStore } from '@/store/auth'
 import type { Standard, FindingTemplate } from '@sitepilot/types'
 
 // מעלים תמונות אחת-אחת ולא במקביל — העלאה בו-זמנית של 10+ תמונות מהפלאפון מציפה את השרת
@@ -134,6 +135,7 @@ interface PropertyDetails {
   generalNotes: string
 }
 // דוח פיקוח/מסירה — פרטי כותרת הדוח (ריק = ברירת מחדל מהפרויקט/היום)
+type LogoMode = 'org' | 'custom' | 'none'
 interface ReportHeader {
   visitDate: string
   projectName: string
@@ -141,15 +143,63 @@ interface ReportHeader {
   contractorName: string
   attendees: string
   generalNotes: string
+  // מיתוג וחתימה — ריק/org = פרטי הארגון מההגדרות
+  logoMode: LogoMode
+  logoUrl: string
+  companyName: string
+  footerText: string
+  signerName: string
+  signerTitle: string
+  signerPhone: string
 }
 const EMPTY_REPORT_HEADER: ReportHeader = {
   visitDate: '', projectName: '', projectAddress: '', contractorName: '', attendees: '', generalNotes: '',
+  logoMode: 'org', logoUrl: '', companyName: '', footerText: '', signerName: '', signerTitle: '', signerPhone: '',
+}
+const LOGO_MODES: { value: LogoMode; label: string }[] = [
+  { value: 'org', label: 'לוגו החברה' },
+  { value: 'custom', label: 'לוגו אחר' },
+  { value: 'none', label: 'ללא לוגו' },
+]
+function asLogoMode(v: unknown): LogoMode {
+  return v === 'custom' || v === 'none' ? v : 'org'
 }
 function headerFromMetadata(m: any): ReportHeader {
   if (!m) return EMPTY_REPORT_HEADER
   return {
     visitDate: m.visitDate || '', projectName: m.projectName || '', projectAddress: m.projectAddress || '',
     contractorName: m.contractorName || '', attendees: m.attendees || '', generalNotes: m.generalNotes || '',
+    logoMode: asLogoMode(m.logoMode), logoUrl: m.logoUrl || '', companyName: m.companyName || '',
+    footerText: m.footerText || '', signerName: m.signerName || '', signerTitle: m.signerTitle || '',
+    signerPhone: m.signerPhone || '',
+  }
+}
+
+// מיתוג וחתימה הם של מי שמפיק את הדוח, לא של דוח מסוים — נזכרים במכשיר (לכל משתמש) כברירת מחדל לדוח הבא
+const BRANDING_KEYS = ['logoMode', 'logoUrl', 'companyName', 'footerText', 'signerName', 'signerTitle', 'signerPhone'] as const
+type RememberedBranding = Pick<ReportHeader, (typeof BRANDING_KEYS)[number]>
+function brandingStorageKey(userId: string | undefined) {
+  return `sh-report-branding-v1-${userId || 'anon'}`
+}
+function loadRememberedBranding(userId: string | undefined): Partial<RememberedBranding> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(brandingStorageKey(userId)) || 'null')
+    if (!raw || typeof raw !== 'object') return {}
+    const out: Partial<RememberedBranding> = {}
+    for (const k of BRANDING_KEYS) if (typeof raw[k] === 'string') (out as any)[k] = raw[k]
+    if (out.logoMode !== undefined) out.logoMode = asLogoMode(out.logoMode)
+    return out
+  } catch {
+    return {}
+  }
+}
+function rememberBranding(userId: string | undefined, header: ReportHeader) {
+  try {
+    const data: Partial<RememberedBranding> = {}
+    for (const k of BRANDING_KEYS) (data as any)[k] = header[k]
+    localStorage.setItem(brandingStorageKey(userId), JSON.stringify(data))
+  } catch {
+    // אחסון חסום (גלישה פרטית וכו') — לא קריטי, פשוט לא נזכרים
   }
 }
 
@@ -218,6 +268,9 @@ export default function FieldReportPage() {
   // פרטי כותרת לדוח פיקוח/מסירה — ניתנים לעריכה בכל שלב, וגם אחרי הפקה דרך "ערוך"
   const [reportHeader, setReportHeader] = useState<ReportHeader>(EMPTY_REPORT_HEADER)
   const [headerOpen, setHeaderOpen] = useState(false)
+  const [logoUploading, setLogoUploading] = useState(false)
+  const [logoError, setLogoError] = useState('')
+  const authUser = useAuthStore((st) => st.user)
 
   // draft state — טיוטה יכולה להיות מקומית (במכשיר, כולל תמונות כ-Blob) או מהענן
   // (רק photoId+photoUrl, כי התמונות כבר הועלו לשרת) — הענן מנצח אם הוא מעודכן יותר
@@ -229,11 +282,16 @@ export default function FieldReportPage() {
 
   // edit-mode state
   const [editLoading, setEditLoading] = useState(false)
-  const [editingItemId, setEditingItemId] = useState<string | null>(null)
-  const [editingNote, setEditingNote] = useState('')
-  const [editingRemark, setEditingRemark] = useState('')
+  // עריכת ממצא — כל השינויים נשמרים בעותק זמני ומוחלים רק ב"שמור" (ביטול מחזיר הכל)
+  const [editDraft, setEditDraft] = useState<Item | null>(null)
+  const [editError, setEditError] = useState('')
+  const [editAnnotateFile, setEditAnnotateFile] = useState<File | null>(null)
+  const [annotateLoading, setAnnotateLoading] = useState(false)
+  const [planForEdit, setPlanForEdit] = useState(false)
 
   const typeInfo = TYPES.find((t) => t.value === reportType)
+  // בזמן העלאה/הפקה לא משנים את הרשימה — השינויים לא ייכנסו לדוח שכבר בתהליך
+  const busy = finishing || savingDraft
   const isHomeInspection = reportType === 'HOME_INSPECTION'
   // דוח פיקוח/מסירה — כותרת ניתנת לעריכה, מקצוע לכל ממצא ותמונות נוספות
   const isFieldReport = reportType === 'INSPECTION' || reportType === 'HANDOVER'
@@ -246,6 +304,18 @@ export default function FieldReportPage() {
     staleTime: 60_000,
   })
   const project = projectData?.data
+
+  // פרטי הארגון — לתצוגת הלוגו הנוכחי וברירות המחדל של המיתוג בכותרת הדוח
+  const { data: orgData } = useQuery({
+    queryKey: ['organization'],
+    queryFn: () => api.get<{ data: any }>('/organization'),
+    enabled: isFieldReport,
+    staleTime: 60_000,
+  })
+  const org = orgData?.data
+  const brandName = reportHeader.companyName.trim() || org?.name || ''
+  const autoFooter = [brandName, ...(reportHeader.companyName.trim() ? [] : [org?.contactEmail, org?.address, org?.phone])]
+    .filter(Boolean).join(' | ')
 
   // הרשימה במסך מסודרת לפי מקצוע — כמו בדוח עצמו
   const displayItems = useMemo(() => {
@@ -324,17 +394,28 @@ export default function FieldReportPage() {
       .finally(() => setEditLoading(false))
   }, [editReportId, projectId])
 
-  function startEditNote(item: Item) {
-    setEditingItemId(item.id)
-    setEditingNote(item.note)
-    setEditingRemark(item.remark || '')
+  function startEditItem(item: Item) {
+    // מעבר לעריכת ממצא אחר שומר את העריכה הפתוחה, כדי שלא יאבדו שינויים
+    if (editDraft && editDraft.id !== item.id) saveEditItem()
+    setEditDraft({ ...item, extraPhotos: item.extraPhotos ? [...item.extraPhotos] : undefined })
+    setEditError('')
   }
 
-  function saveEditNote() {
-    setItems((prev) => prev.map((it) => (it.id === editingItemId ? { ...it, note: editingNote, remark: isHomeInspection ? editingRemark : it.remark } : it)))
-    setEditingItemId(null)
-    setEditingNote('')
-    setEditingRemark('')
+  function saveEditItem() {
+    if (!editDraft) return
+    const draft = editDraft
+    setItems((prev) => prev.map((it) => (it.id === draft.id ? draft : it)))
+    setEditDraft(null)
+    setEditError('')
+  }
+
+  function cancelEditItem() {
+    setEditDraft(null)
+    setEditError('')
+  }
+
+  function updateDraft(patch: Partial<Item>) {
+    setEditDraft((d) => (d ? { ...d, ...patch } : d))
   }
 
   // בדיקה אם קיימת טיוטה שמורה — מקומית (במכשיר) ו/או בענן; בוחרים את המעודכנת מביניהן
@@ -368,6 +449,13 @@ export default function FieldReportPage() {
         contractorName: reportHeader.contractorName.trim() || undefined,
         attendees: reportHeader.attendees.trim() || undefined,
         generalNotes: reportHeader.generalNotes.trim() || undefined,
+        logoMode: reportHeader.logoMode,
+        logoUrl: reportHeader.logoMode === 'custom' ? (reportHeader.logoUrl || undefined) : undefined,
+        companyName: reportHeader.companyName.trim() || undefined,
+        footerText: reportHeader.footerText.trim() || undefined,
+        signerName: reportHeader.signerName.trim() || undefined,
+        signerTitle: reportHeader.signerTitle.trim() || undefined,
+        signerPhone: reportHeader.signerPhone.trim() || undefined,
       }
     }
     if (!isHomeInspection) return undefined
@@ -720,30 +808,110 @@ export default function FieldReportPage() {
     setActivePlan(null)
   }
 
-  // עריכת ממצא קיים — מקצוע ותמונות נוספות מתעדכנים מיד ברשימה
-  function setItemCategory(id: string, category: string) {
-    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, category: category || undefined } : it)))
+  // עריכת ממצא קיים — פועל על העותק הזמני (editDraft)
+  function replaceDraftPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    // photoId מתאפס כדי שהתמונה החדשה תועלה בהפקה
+    updateDraft({ file, previewUrl: URL.createObjectURL(file), photoId: undefined })
   }
 
-  function addItemExtraPhoto(id: string, e: React.ChangeEvent<HTMLInputElement>) {
+  // ציור על התמונה הראשית — תמונה שכבר בשרת נטענת דרך ה-proxy (same-origin) כדי שאפשר יהיה לצייר עליה
+  async function openDraftAnnotator() {
+    if (!editDraft) return
+    if (editDraft.file) {
+      setEditAnnotateFile(editDraft.file)
+      return
+    }
+    setAnnotateLoading(true)
+    setEditError('')
+    try {
+      const name = editDraft.previewUrl.split('?')[0].split('/').pop() || ''
+      const res = await fetch(`/api/files/${encodeURIComponent(name)}`)
+      if (!res.ok) throw new Error()
+      const blob = await res.blob()
+      setEditAnnotateFile(new File([blob], name || 'photo.jpg', { type: blob.type || 'image/jpeg' }))
+    } catch {
+      setEditError('טעינת התמונה לסימון נכשלה — בדוק את החיבור ונסה שוב')
+    } finally {
+      setAnnotateLoading(false)
+    }
+  }
+
+  function openPlanForEdit() {
+    setPlanForEdit(true)
+    setPlanDialogOpen(true)
+  }
+
+  function removeDraftPlan() {
+    updateDraft({ planId: undefined, planName: undefined, planUrl: undefined, planPin: undefined, planPhotoId: undefined })
+  }
+
+  function addDraftExtraPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
     const photo: ExtraPhoto = { file, previewUrl: URL.createObjectURL(file) }
-    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, extraPhotos: [...(it.extraPhotos ?? []), photo] } : it)))
+    setEditDraft((d) => (d ? { ...d, extraPhotos: [...(d.extraPhotos ?? []), photo] } : d))
   }
 
-  function removeItemExtraPhoto(id: string, idx: number) {
-    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, extraPhotos: (it.extraPhotos ?? []).filter((_, i) => i !== idx) } : it)))
+  function removeDraftExtraPhoto(idx: number) {
+    setEditDraft((d) => (d ? { ...d, extraPhotos: (d.extraPhotos ?? []).filter((_, i) => i !== idx) } : d))
   }
 
-  function updateItemExtraPhotoCaption(id: string, idx: number, caption: string) {
-    setItems((prev) => prev.map((it) => (it.id === id
-      ? { ...it, extraPhotos: (it.extraPhotos ?? []).map((ep, i) => (i === idx ? { ...ep, caption } : ep)) }
-      : it)))
+  function updateDraftExtraPhotoCaption(idx: number, caption: string) {
+    setEditDraft((d) => (d ? { ...d, extraPhotos: (d.extraPhotos ?? []).map((ep, i) => (i === idx ? { ...ep, caption } : ep)) } : d))
+  }
+
+  // שינוי סדר ממצא — בתוך אותו מקצוע כשהרשימה מקובצת לפי מקצועות
+  function canMove(id: string, dir: -1 | 1) {
+    const i = displayItems.findIndex((it) => it.id === id)
+    const j = i + dir
+    if (i === -1 || j < 0 || j >= displayItems.length) return false
+    return !groupByTrade || (displayItems[i].category || '') === (displayItems[j].category || '')
+  }
+
+  function moveItem(id: string, dir: -1 | 1) {
+    if (!canMove(id, dir)) return
+    const i = displayItems.findIndex((it) => it.id === id)
+    const a = displayItems[i].id
+    const b = displayItems[i + dir].id
+    setItems((prev) => {
+      const next = [...prev]
+      const ia = next.findIndex((it) => it.id === a)
+      const ib = next.findIndex((it) => it.id === b)
+      ;[next[ia], next[ib]] = [next[ib], next[ia]]
+      return next
+    })
+  }
+
+  function planUrlFor(planId: string | undefined) {
+    const plan = planId ? plans.find((d: any) => d.id === planId) : undefined
+    return plan ? absoluteUrl(plan.url) : undefined
+  }
+
+  // לוגו לדוח הזה בלבד — לא משנה את לוגו הארגון
+  async function uploadReportLogo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setLogoUploading(true)
+    setLogoError('')
+    try {
+      const fd = new FormData()
+      fd.append('logo', file)
+      const res = await api.upload<{ data: { url: string } }>('/organization/report-logo', fd)
+      setReportHeader((h) => ({ ...h, logoMode: 'custom', logoUrl: res.data.url }))
+    } catch (err: any) {
+      setLogoError(err.message || 'העלאת הלוגו נכשלה')
+    } finally {
+      setLogoUploading(false)
+    }
   }
 
   function removeItem(id: string) {
+    if (editDraft?.id === id) cancelEditItem()
     setItems((prev) => prev.filter((i) => i.id !== id))
   }
 
@@ -807,27 +975,28 @@ export default function FieldReportPage() {
             fd.append('caption', captionParts.join(' | '))
             const res = await api.upload<{ data: any }>('/photos/upload', fd)
             photoId = res.data.id as string
-            // תמונת תוכנית מסומנת — מוצמדת לאותו ממצא ולא נספרת בנפרד
-            if (item.planUrl && item.planPin) {
-              const blob = await generateAnnotatedPlanImage(item.planUrl, item.planPin)
-              if (blob) {
-                const planFd = new FormData()
-                planFd.append('file', new File([blob], 'plan-annotation.jpg', { type: 'image/jpeg' }))
-                planFd.append('projectId', projectId)
-                planFd.append('caption', `מיקום על תוכנית: ${item.planName || ''}`)
-                const planRes = await api.upload<{ data: any }>('/photos/upload', planFd)
-                planPhotoId = planRes.data.id
-              }
-            }
-            // שומרים את מזהה התמונה על הממצא — אם ההפקה נכשלת באמצע, לחיצה חוזרת ממשיכה מאותה נקודה ולא מעלה הכל מחדש
-            const uploadedPhotoId = photoId
-            setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, photoId: uploadedPhotoId, planPhotoId } : it)))
           }
 
-          // תמונות נוספות (דוח בדק בית) — מעלים רק אלה שעדיין קבצים מקומיים, שומרים כיתוב לכל אחת
+          // תמונת תוכנית מסומנת — מוצמדת לאותו ממצא ולא נספרת בנפרד. נוצרת כשעדיין אין:
+          // ממצא חדש, מיקום ששונה בעריכה, או טיוטה ששוחזרה (שם אין planUrl — לוקחים מרשימת התוכניות)
+          const planUrl = item.planUrl || planUrlFor(item.planId)
+          if (!planPhotoId && planUrl && item.planPin) {
+            const blob = await generateAnnotatedPlanImage(planUrl, item.planPin)
+            if (blob) {
+              const planFd = new FormData()
+              planFd.append('file', new File([blob], 'plan-annotation.jpg', { type: 'image/jpeg' }))
+              planFd.append('projectId', projectId)
+              planFd.append('caption', `מיקום על תוכנית: ${item.planName || ''}`)
+              const planRes = await api.upload<{ data: any }>('/photos/upload', planFd)
+              planPhotoId = planRes.data.id as string
+            }
+          }
+
+          // תמונות נוספות — מעלים רק אלה שעדיין קבצים מקומיים, שומרים כיתוב לכל אחת
           let extraPhotos: { photoId: string; caption?: string }[] | undefined
+          let uploadedExtras: ({ photoId: string; caption?: string } | null)[] = []
           if (item.extraPhotos?.length) {
-            const uploaded = await mapSeq(item.extraPhotos, async (ep) => {
+            uploadedExtras = await mapSeq(item.extraPhotos, async (ep) => {
               if (ep.photoId) return { photoId: ep.photoId, caption: ep.caption }
               if (!ep.file) return null
               const fd = new FormData()
@@ -836,7 +1005,15 @@ export default function FieldReportPage() {
               const res = await api.upload<{ data: any }>('/photos/upload', fd)
               return { photoId: res.data.id as string, caption: ep.caption }
             })
-            extraPhotos = uploaded.filter((ep): ep is { photoId: string; caption: string | undefined } => !!ep)
+            extraPhotos = uploadedExtras.filter((ep): ep is { photoId: string; caption: string | undefined } => !!ep)
+          }
+
+          // שומרים את מזהי התמונות שהועלו על הממצא — אם ההפקה נכשלת באמצע, לחיצה חוזרת ממשיכה מאותה נקודה ולא מעלה שוב
+          const newExtraIds = (item.extraPhotos ?? []).some((ep, i) => !ep.photoId && uploadedExtras[i])
+          if (photoId !== item.photoId || planPhotoId !== item.planPhotoId || newExtraIds) {
+            const ids = { photoId, planPhotoId }
+            const extras = item.extraPhotos?.map((ep, i) => (ep.photoId || !uploadedExtras[i] ? ep : { ...ep, photoId: uploadedExtras[i]!.photoId }))
+            setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, ...ids, extraPhotos: extras } : it)))
           }
 
           return {
@@ -873,6 +1050,7 @@ export default function FieldReportPage() {
             })
         setResultReport(reportRes.data)
       }
+      if (isFieldReport) rememberBranding(authUser?.id, reportHeader)
       // הדוח הופק — מוחקים את הטיוטה השמורה (מקומית וגם בענן)
       deleteDraft(projectId).catch(() => {})
       api.delete(`/projects/${projectId}/field-report-draft`).catch(() => {})
@@ -913,6 +1091,9 @@ export default function FieldReportPage() {
     setPropertyDetails(EMPTY_PROPERTY_DETAILS)
     setReportHeader(EMPTY_REPORT_HEADER)
     setHeaderOpen(false)
+    setEditDraft(null)
+    setEditAnnotateFile(null)
+    setPlanForEdit(false)
     setPropertyDetailsOpen(false)
   }
 
@@ -968,7 +1149,11 @@ export default function FieldReportPage() {
             {TYPES.map(({ value, label, desc, icon: Icon }) => (
               <button
                 key={value}
-                onClick={() => { setReportType(value); if (value === 'HOME_INSPECTION') setPropertyDetailsOpen(true) }}
+                onClick={() => {
+                  setReportType(value)
+                  if (value === 'HOME_INSPECTION') setPropertyDetailsOpen(true)
+                  if (value === 'INSPECTION' || value === 'HANDOVER') setReportHeader({ ...EMPTY_REPORT_HEADER, ...loadRememberedBranding(authUser?.id) })
+                }}
                 className="w-full card flex items-center gap-3 text-right hover:border-primary/30 hover:shadow-md transition-all"
               >
                 <div className="w-11 h-11 rounded-xl bg-primary-50 flex items-center justify-center shrink-0">
@@ -1005,7 +1190,7 @@ export default function FieldReportPage() {
                 )}
                 {isFieldReport && !headerOpen && (
                   <button onClick={() => setHeaderOpen(true)} className="text-xs text-primary hover:underline">
-                    ערוך כותרת הדוח
+                    ערוך כותרת, לוגו וחתימה
                   </button>
                 )}
                 {editReportId ? (
@@ -1062,6 +1247,95 @@ export default function FieldReportPage() {
                   value={reportHeader.generalNotes}
                   onChange={(e) => setReportHeader((h) => ({ ...h, generalNotes: e.target.value }))}
                 />
+
+                <div className="pt-3 border-t border-gray-100 space-y-3">
+                  <h3 className="font-semibold text-neutral-dark text-sm">מיתוג הדוח</h3>
+                  <div>
+                    <label className="text-sm font-medium text-neutral-dark">לוגו בראש הדוח</label>
+                    <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                      {LOGO_MODES.map((m) => (
+                        <button
+                          key={m.value}
+                          type="button"
+                          onClick={() => setReportHeader((h) => ({ ...h, logoMode: m.value }))}
+                          className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                            reportHeader.logoMode === m.value
+                              ? 'bg-primary text-white border-primary'
+                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-primary/40'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex items-center gap-3">
+                      {((reportHeader.logoMode === 'org' && org?.logo) || (reportHeader.logoMode === 'custom' && reportHeader.logoUrl)) && (
+                        <div className="w-16 h-16 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center overflow-hidden shrink-0">
+                          <img
+                            src={absoluteUrl(reportHeader.logoMode === 'custom' ? reportHeader.logoUrl : org.logo)}
+                            alt="לוגו בדוח"
+                            className="w-full h-full object-contain p-1"
+                          />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0 text-xs text-gray-500">
+                        {reportHeader.logoMode === 'org' && (org?.logo ? 'הלוגו שמוגדר בהגדרות הארגון' : 'לא הוגדר לוגו לחברה — יוצג שם העסק')}
+                        {reportHeader.logoMode === 'none' && 'בראש הדוח יוצג שם העסק בלבד'}
+                        {reportHeader.logoMode === 'custom' && (
+                          <label className="inline-flex items-center gap-1.5 font-medium text-primary border border-primary/30 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-primary-50">
+                            <Plus size={13} />
+                            {logoUploading ? 'מעלה...' : reportHeader.logoUrl ? 'החלף לוגו' : 'העלה לוגו'}
+                            <input type="file" accept="image/*" className="hidden" disabled={logoUploading} onChange={uploadReportLogo} />
+                          </label>
+                        )}
+                        {reportHeader.logoMode === 'custom' && !reportHeader.logoUrl && !logoUploading && (
+                          <p className="mt-1 text-amber-700">עדיין לא הועלה לוגו — בלי לוגו יוצג שם העסק</p>
+                        )}
+                      </div>
+                    </div>
+                    {logoError && <p className="text-xs text-danger mt-1">{logoError}</p>}
+                    <p className="text-xs text-gray-400 mt-1.5">
+                      "לוגו אחר" משנה רק את הדוחות שלך. להחלפת הלוגו בכל הדוחות של הארגון:{' '}
+                      <Link href="/settings/organization" className="underline text-primary">הגדרות ארגון</Link>
+                    </p>
+                  </div>
+                  <Input
+                    label="שם העסק בדוח"
+                    value={reportHeader.companyName}
+                    onChange={(e) => setReportHeader((h) => ({ ...h, companyName: e.target.value }))}
+                    placeholder={org?.name || ''}
+                  />
+                  <Input
+                    label="כותרת תחתונה (בתחתית כל עמוד)"
+                    value={reportHeader.footerText}
+                    onChange={(e) => setReportHeader((h) => ({ ...h, footerText: e.target.value }))}
+                    placeholder={autoFooter}
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-gray-100 space-y-3">
+                  <h3 className="font-semibold text-neutral-dark text-sm">חתימה בסוף הדוח</h3>
+                  <Input
+                    label="שם החותם"
+                    value={reportHeader.signerName}
+                    onChange={(e) => setReportHeader((h) => ({ ...h, signerName: e.target.value }))}
+                    placeholder={authUser?.name || brandName}
+                  />
+                  <Input
+                    label="תפקיד"
+                    value={reportHeader.signerTitle}
+                    onChange={(e) => setReportHeader((h) => ({ ...h, signerTitle: e.target.value }))}
+                    placeholder="למשל: מפקח בנייה"
+                  />
+                  <Input
+                    label="טלפון"
+                    value={reportHeader.signerPhone}
+                    onChange={(e) => setReportHeader((h) => ({ ...h, signerPhone: e.target.value }))}
+                    placeholder={reportHeader.companyName.trim() ? '' : (org?.phone || '')}
+                  />
+                  <p className="text-xs text-gray-400">אחרי הפקת הדוח, המיתוג והחתימה יוצעו אוטומטית בדוח הבא שלך במכשיר הזה.</p>
+                </div>
+
                 <Button onClick={() => setHeaderOpen(false)} className="w-full">
                   <Check size={14} />
                   סיום עריכת כותרת
@@ -1510,58 +1784,184 @@ export default function FieldReportPage() {
                         {item.title && (
                           <p className="text-sm font-medium text-neutral-dark line-clamp-1">{item.title}</p>
                         )}
-                        {editingItemId !== item.id && (
+                        {editDraft?.id !== item.id && (
                           <p className={`text-gray-600 line-clamp-2 ${item.title ? 'text-xs text-gray-500 mt-0.5' : 'text-sm'}`}>
                             {item.note || (item.title ? '' : '(ללא הערה)')}
                           </p>
                         )}
                       </div>
-                      <div className="flex flex-col gap-1 shrink-0">
-                        <button onClick={() => startEditNote(item)} className="p-1.5 text-gray-400 hover:text-primary">
-                          <Pencil size={15} />
-                        </button>
-                        <button onClick={() => removeItem(item.id)} className="p-1.5 text-gray-400 hover:text-danger">
-                          <Trash2 size={15} />
-                        </button>
+                      <div className="flex gap-0.5 shrink-0">
+                        {items.length > 1 && (
+                          <div className="flex flex-col gap-1">
+                            <button
+                              onClick={() => moveItem(item.id, -1)}
+                              disabled={busy || !canMove(item.id, -1)}
+                              aria-label="הזז למעלה"
+                              className="p-1.5 text-gray-400 hover:text-primary disabled:opacity-25 disabled:hover:text-gray-400"
+                            >
+                              <ChevronUp size={15} />
+                            </button>
+                            <button
+                              onClick={() => moveItem(item.id, 1)}
+                              disabled={busy || !canMove(item.id, 1)}
+                              aria-label="הזז למטה"
+                              className="p-1.5 text-gray-400 hover:text-primary disabled:opacity-25 disabled:hover:text-gray-400"
+                            >
+                              <ChevronDown size={15} />
+                            </button>
+                          </div>
+                        )}
+                        <div className="flex flex-col gap-1">
+                          <button onClick={() => startEditItem(item)} disabled={busy} aria-label="ערוך ממצא" className="p-1.5 text-gray-400 hover:text-primary disabled:opacity-25">
+                            <Pencil size={15} />
+                          </button>
+                          <button onClick={() => removeItem(item.id)} disabled={busy} aria-label="מחק ממצא" className="p-1.5 text-gray-400 hover:text-danger disabled:opacity-25">
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                    {editingItemId === item.id && (
-                      <div className="space-y-2">
+                    {editDraft?.id === item.id && (
+                      <div className="space-y-3 border-t border-gray-100 pt-3">
+                        {/* תמונה ראשית — החלפה או ציור/סימון */}
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 mb-2">תמונה ראשית</p>
+                          <div className="flex items-center gap-3">
+                            <img src={editDraft.previewUrl} className="w-20 h-20 object-cover rounded-lg shrink-0" />
+                            <div className="flex flex-col gap-1.5 flex-1">
+                              <label className="flex items-center justify-center gap-1.5 text-xs font-medium border border-gray-300 rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-50">
+                                <Camera size={13} />
+                                החלף תמונה
+                                <input type="file" accept="image/*" className="hidden" onChange={replaceDraftPhoto} />
+                              </label>
+                              <button
+                                type="button"
+                                onClick={openDraftAnnotator}
+                                disabled={annotateLoading}
+                                className="flex items-center justify-center gap-1.5 text-xs font-medium border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
+                              >
+                                <PenLine size={13} />
+                                {annotateLoading ? 'טוען תמונה...' : 'סמן על התמונה'}
+                              </button>
+                            </div>
+                          </div>
+                          {isHomeInspection && (
+                            <input
+                              value={editDraft.photoCaption || ''}
+                              onChange={(e) => updateDraft({ photoCaption: e.target.value || undefined })}
+                              placeholder="כיתוב לתמונה (אופציונלי)"
+                              className="mt-2 w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-primary"
+                            />
+                          )}
+                        </div>
+
+                        {isHomeInspection && (
+                          <Input
+                            label="כותרת הממצא"
+                            value={editDraft.title || ''}
+                            onChange={(e) => updateDraft({ title: e.target.value || undefined })}
+                          />
+                        )}
+
+                        <div>
+                          <label className="text-sm font-medium text-neutral-dark">חדר / אזור</label>
+                          <input
+                            list="field-report-rooms"
+                            value={editDraft.room}
+                            onChange={(e) => updateDraft({ room: e.target.value })}
+                            placeholder="בחר מהרשימה או הקלד..."
+                            className="mt-1 w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                          />
+                        </div>
+
                         <Textarea
-                          value={editingNote}
-                          onChange={(e) => setEditingNote(e.target.value)}
+                          label={isHomeInspection ? 'המלצה' : 'ממצא / הערה'}
+                          value={editDraft.note}
+                          onChange={(e) => updateDraft({ note: e.target.value })}
                           placeholder={isHomeInspection ? 'המלצה...' : 'הערה לממצא...'}
-                          autoFocus
                         />
                         {isHomeInspection && (
                           <Textarea
-                            value={editingRemark}
-                            onChange={(e) => setEditingRemark(e.target.value)}
-                            placeholder="הערה נוספת..."
+                            label="הערה נוספת"
+                            value={editDraft.remark || ''}
+                            onChange={(e) => updateDraft({ remark: e.target.value || undefined })}
                           />
                         )}
+
                         {isFieldReport && (
                           <Select
                             label="מקצוע"
-                            value={item.category || ''}
-                            onChange={(e) => setItemCategory(item.id, e.target.value)}
+                            value={editDraft.category || ''}
+                            onChange={(e) => updateDraft({ category: e.target.value || undefined })}
                             options={TRADE_OPTIONS}
                           />
                         )}
+                        {isHomeInspection && (
+                          <div className="grid grid-cols-2 gap-3">
+                            <Select
+                              label="קטגוריה"
+                              value={editDraft.category || ''}
+                              onChange={(e) => updateDraft({ category: e.target.value || undefined })}
+                              options={[{ value: '', label: 'כללי' }, ...Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }))]}
+                            />
+                            <div>
+                              <label className="text-sm font-medium text-neutral-dark">חומרה</label>
+                              <div className="flex gap-1 mt-1.5 flex-wrap">
+                                {SEVERITIES.map((sv) => (
+                                  <button
+                                    key={sv.value}
+                                    type="button"
+                                    onClick={() => updateDraft({ severity: editDraft.severity === sv.value ? undefined : sv.value })}
+                                    className={`text-xs px-2 py-1.5 rounded-full border transition-colors ${
+                                      editDraft.severity === sv.value ? 'bg-primary text-white border-primary' : `${SEVERITY_COLORS[sv.value]} border-transparent`
+                                    }`}
+                                  >
+                                    {sv.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* מיקום על תוכנית — שינוי או הסרה; תמונת התוכנית המסומנת תיווצר מחדש בהפקה */}
+                        {(plans.length > 0 || editDraft.planName) && (
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 mb-2">מיקום על תוכנית</p>
+                            <div className="flex items-center gap-2">
+                              <span className="flex-1 min-w-0 text-sm text-neutral-dark truncate">
+                                {editDraft.planName ? `${editDraft.planName}${editDraft.planPin ? ' — מסומן' : ''}` : 'לא סומן'}
+                              </span>
+                              {plans.length > 0 && (
+                                <Button size="sm" variant="outline" onClick={openPlanForEdit}>
+                                  <MapPin size={13} />
+                                  {editDraft.planName ? 'שנה' : 'סמן'}
+                                </Button>
+                              )}
+                              {editDraft.planName && (
+                                <Button size="sm" variant="ghost" onClick={removeDraftPlan}>
+                                  <X size={13} />
+                                  הסר
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
                         {supportsExtraPhotos && (
                           <div>
                             <p className="text-xs font-medium text-gray-500 mb-2">תמונות נוספות לממצא</p>
                             <div className="space-y-2">
-                              {(item.extraPhotos ?? []).map((ep, i) => (
+                              {(editDraft.extraPhotos ?? []).map((ep, i) => (
                                 <div key={i} className="flex items-center gap-2">
                                   <img src={ep.previewUrl} className="w-12 h-12 object-cover rounded-lg shrink-0" />
                                   <input
                                     value={ep.caption || ''}
-                                    onChange={(e) => updateItemExtraPhotoCaption(item.id, i, e.target.value)}
+                                    onChange={(e) => updateDraftExtraPhotoCaption(i, e.target.value)}
                                     placeholder="כיתוב לתמונה..."
                                     className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-primary"
                                   />
-                                  <button onClick={() => removeItemExtraPhoto(item.id, i)} className="p-1.5 text-gray-400 hover:text-danger shrink-0">
+                                  <button onClick={() => removeDraftExtraPhoto(i)} aria-label="הסר תמונה" className="p-1.5 text-gray-400 hover:text-danger shrink-0">
                                     <X size={14} />
                                   </button>
                                 </div>
@@ -1569,17 +1969,19 @@ export default function FieldReportPage() {
                               <label className="flex items-center justify-center gap-2 py-2 rounded-lg border-2 border-dashed border-gray-300 cursor-pointer hover:border-primary/40 transition-colors text-xs text-gray-500">
                                 <Plus size={14} />
                                 הוסף תמונה
-                                <input type="file" accept="image/*" className="hidden" onChange={(e) => addItemExtraPhoto(item.id, e)} />
+                                <input type="file" accept="image/*" className="hidden" onChange={addDraftExtraPhoto} />
                               </label>
                             </div>
                           </div>
                         )}
+
+                        {editError && <p className="text-xs text-danger">{editError}</p>}
                         <div className="flex gap-2">
-                          <Button size="sm" onClick={saveEditNote} className="flex-1">
+                          <Button size="sm" onClick={saveEditItem} className="flex-1">
                             <Check size={13} />
-                            שמור
+                            שמור שינויים בממצא
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => { setEditingItemId(null); setEditingNote(''); setEditingRemark('') }}>
+                          <Button size="sm" variant="outline" onClick={cancelEditItem}>
                             ביטול
                           </Button>
                         </div>
@@ -1597,7 +1999,7 @@ export default function FieldReportPage() {
                   <button onClick={() => { setHeaderOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="w-full text-right text-sm border border-gray-200 rounded-lg px-3 py-2.5 hover:border-primary/40">
                     <span className="text-xs text-gray-500 block">כותרת הדוח</span>
                     <span className="text-neutral-dark">{customTitle || `${typeInfo?.label} — ${project?.name || 'שם הפרויקט'}`}</span>
-                    <span className="text-xs text-primary block mt-0.5">לחץ לעריכת הכותרת והפרטים</span>
+                    <span className="text-xs text-primary block mt-0.5">לחץ לעריכת הכותרת, הלוגו והחתימה</span>
                   </button>
                 ) : (
                   <Input
@@ -1610,12 +2012,17 @@ export default function FieldReportPage() {
                 {errorMsg && <p className="text-sm text-danger">{errorMsg}</p>}
                 {progressMsg && <p className="text-sm text-primary text-center">{progressMsg}</p>}
                 {draftSavedMsg && <p className="text-sm text-green-600 text-center">{draftSavedMsg}</p>}
-                <Button onClick={finish} loading={finishing} disabled={savingDraft} className="w-full" size="lg">
+                {editDraft && (
+                  <p className="text-sm text-amber-700 bg-amber-50 rounded-lg px-3 py-2 text-center">
+                    יש ממצא בעריכה — לחץ "שמור שינויים בממצא" או "ביטול" לפני הפקת הדוח
+                  </p>
+                )}
+                <Button onClick={finish} loading={finishing} disabled={savingDraft || !!editDraft} className="w-full" size="lg">
                   <FileText size={16} />
                   {editReportId ? `שמור שינויים והפק מחדש (${items.length})` : `סיום והפקת דוח (${items.length})`}
                 </Button>
                 {!editReportId && (
-                  <Button variant="outline" onClick={saveDraftNow} loading={savingDraft} disabled={finishing} className="w-full">
+                  <Button variant="outline" onClick={saveDraftNow} loading={savingDraft} disabled={finishing || !!editDraft} className="w-full">
                     <Save size={15} />
                     שמור טיוטה — המשך מאוחר יותר
                   </Button>
@@ -1675,13 +2082,13 @@ export default function FieldReportPage() {
         <div className="fixed inset-0 z-40 flex items-end">
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => setPlanDialogOpen(false)}
+            onClick={() => { setPlanDialogOpen(false); setPlanForEdit(false) }}
           />
           <div className="relative w-full bg-white rounded-t-2xl p-4 space-y-3 max-h-[75vh] overflow-auto">
             <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto" />
             <div className="flex items-center gap-2 justify-center">
               <Map size={18} className="text-primary" />
-              <p className="font-semibold text-neutral-dark">סמן מיקום על תוכנית?</p>
+              <p className="font-semibold text-neutral-dark">{planForEdit ? 'בחר תוכנית לסימון המיקום' : 'סמן מיקום על תוכנית?'}</p>
             </div>
             <p className="text-xs text-gray-400 text-center">בחר תוכנית לסימון המיקום המדויק של הממצא</p>
 
@@ -1704,13 +2111,23 @@ export default function FieldReportPage() {
               ))}
             </div>
 
-            <Button
-              variant="outline"
-              onClick={() => { setPlanDialogOpen(false); doAddItem() }}
-              className="w-full mt-2"
-            >
-              דלג — הוסף ללא סימון על תוכנית
-            </Button>
+            {planForEdit ? (
+              <Button
+                variant="outline"
+                onClick={() => { setPlanDialogOpen(false); setPlanForEdit(false) }}
+                className="w-full mt-2"
+              >
+                ביטול
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => { setPlanDialogOpen(false); doAddItem() }}
+                className="w-full mt-2"
+              >
+                דלג — הוסף ללא סימון על תוכנית
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -1720,7 +2137,16 @@ export default function FieldReportPage() {
         <PlanPinPicker
           url={activePlan.url}
           planName={activePlan.name}
-          onConfirm={(pin) => doAddItem({ planId: activePlan.id, planName: activePlan.name, planUrl: activePlan.url, planPin: pin })}
+          onConfirm={(pin) => {
+            if (planForEdit) {
+              // מיקום חדש לממצא קיים — מאפסים את תמונת התוכנית הישנה כדי שתיווצר מחדש בהפקה
+              updateDraft({ planId: activePlan.id, planName: activePlan.name, planUrl: activePlan.url, planPin: pin ?? undefined, planPhotoId: undefined })
+              setActivePlan(null)
+              setPlanForEdit(false)
+            } else {
+              doAddItem({ planId: activePlan.id, planName: activePlan.name, planUrl: activePlan.url, planPin: pin })
+            }
+          }}
           onBack={() => { setActivePlan(null); setPlanDialogOpen(true) }}
         />
       )}
@@ -1737,6 +2163,22 @@ export default function FieldReportPage() {
           onCancel={() => setPhotoAnnotatorOpen(false)}
         />
       )}
+
+      {/* ציור על התמונה הראשית של ממצא קיים (מתוך חלון העריכה) */}
+      {editAnnotateFile && (
+        <PhotoAnnotator
+          file={editAnnotateFile}
+          onConfirm={(newFile, newPreviewUrl) => {
+            updateDraft({ file: newFile, previewUrl: newPreviewUrl, photoId: undefined })
+            setEditAnnotateFile(null)
+          }}
+          onCancel={() => setEditAnnotateFile(null)}
+        />
+      )}
+
+      <datalist id="field-report-rooms">
+        {ROOMS.map((room) => <option key={room} value={room} />)}
+      </datalist>
     </AppLayout>
   )
 }
