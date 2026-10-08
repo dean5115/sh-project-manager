@@ -1,4 +1,4 @@
-import puppeteer, { Browser } from 'puppeteer'
+import puppeteer, { Browser, Page } from 'puppeteer'
 import path from 'path'
 import sharp from 'sharp'
 import { readFile } from './storage'
@@ -98,6 +98,15 @@ async function getBrowser(): Promise<Browser> {
     ],
   })
   return browserPromise
+}
+
+// עם --single-process, Chrome נסגר יחד עם הדף האחרון שלו — אבל לרגע עדיין נראה מחובר, והפקה שהגיעה
+// מיד אחרי הקודמת תפסה דפדפן גוסס ונכשלה ב-"Connection closed". לכן סוגרים אותו במפורש אחרי כל הפקה,
+// וההפקה הבאה משגרת דפדפן חדש (ממילא זה מה שקרה, רק בלי המרוץ). ההפקות רצות אחת-אחת (enqueuePdf).
+async function releasePage(browser: Browser, page: Page) {
+  await page.close().catch(() => {})
+  browserPromise = null
+  await browser.close().catch(() => {})
 }
 
 // מריצים הפקת PDF אחת בכל פעם — שני דוחות שנוצרים בו-זמנית מכפילים את צריכת הזיכרון
@@ -302,7 +311,7 @@ async function generatePdfImpl(options: PdfOptions): Promise<Buffer> {
     })
     return Buffer.from(pdfBuffer)
   } finally {
-    await page.close()
+    await releasePage(browser, page)
   }
 }
 
@@ -462,7 +471,7 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
     })
     return Buffer.from(pdfBuffer)
   } finally {
-    await page.close()
+    await releasePage(browser, page)
   }
 }
 
@@ -811,7 +820,7 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
     })
     return Buffer.from(pdfBuffer)
   } finally {
-    await page.close()
+    await releasePage(browser, page)
   }
 }
 
@@ -898,7 +907,7 @@ async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> 
     })
     return Buffer.from(pdfBuffer)
   } finally {
-    await page.close()
+    await releasePage(browser, page)
   }
 }
 
