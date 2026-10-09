@@ -22,10 +22,12 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// מילה מספרית מתאימה רק מתחילת מספר: "120" מוצא את 1205 (תוך כדי הקלדה), אבל "3" לא מוצא 1203 או 2003
+// מילה מספרית מתאימה רק מתחילת מספר: "120" מוצא את 1205 (תוך כדי הקלדה), אבל "3" לא מוצא 1203 או 2003.
+// נקודה לפני המספר בסדר ("ת.י.1920"), אלא אם היא חלק ממספר סעיף (3.1 לא נמצא בתוך 3.3.1)
+const NUMBER_START = '(^|[^\\d.]|(^|[^\\d])\\.)'
 function wordMatches(text: string, word: string): boolean {
   if (!/^\d/.test(word)) return text.includes(word)
-  return new RegExp(`(^|[^\\d.])${escapeRegex(word)}`).test(text)
+  return new RegExp(`${NUMBER_START}${escapeRegex(word)}`).test(text)
 }
 
 function haystack(s: Standard): string {
@@ -45,7 +47,7 @@ export function searchStandards(standards: Standard[], query: string): Standard[
   const words = q.split(' ')
   const isNumber = /^\d+$/.test(q)
   // ביטוי שלם בקוד; מספר בקצוות לא נחשב כחלק ממספר ארוך יותר ("תי 1920" לא תופס את 19200)
-  const phrase = new RegExp(`${/^\d/.test(q) ? '(^|[^\\d.])' : ''}${escapeRegex(q)}${/\d$/.test(q) ? '(?!\\d)' : ''}`)
+  const phrase = new RegExp(`${/^\d/.test(q) ? NUMBER_START : ''}${escapeRegex(q)}${/\d$/.test(q) ? '(?!\\d)' : ''}`)
   return standards
     .map((s, index) => {
       const text = haystack(s)

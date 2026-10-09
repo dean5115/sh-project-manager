@@ -224,10 +224,10 @@ export default function FindingTemplatesPage() {
 
           <div>
             <label className="text-sm font-medium text-neutral-dark">תקנים משויכים כברירת מחדל</label>
-            {relevantStandards.length === 0 ? (
-              <p className="text-xs text-gray-400 mt-1.5">אין תקנים מתאימים — ניתן להוסיף ב"ספריית תקנים"</p>
+            {standards.length === 0 ? (
+              <p className="text-xs text-gray-400 mt-1.5">אין תקנים עדיין — ניתן להוסיף ב"ספריית תקנים"</p>
             ) : (
-              <StandardChipPicker standards={relevantStandards} selectedIds={form.standardIds} onToggle={toggleStandard} />
+              <StandardChipPicker standards={relevantStandards} searchPool={standards} selectedIds={form.standardIds} onToggle={toggleStandard} />
             )}
           </div>
 
