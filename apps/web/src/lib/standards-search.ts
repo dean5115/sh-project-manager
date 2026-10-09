@@ -18,11 +18,14 @@ export function normalizeSearch(text: string): string {
     .trim()
 }
 
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 // מילה מספרית מתאימה רק מתחילת מספר: "120" מוצא את 1205 (תוך כדי הקלדה), אבל "3" לא מוצא 1203 או 2003
 function wordMatches(text: string, word: string): boolean {
   if (!/^\d/.test(word)) return text.includes(word)
-  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(^|[^\\d.])${escaped}`).test(text)
+  return new RegExp(`(^|[^\\d.])${escapeRegex(word)}`).test(text)
 }
 
 function haystack(s: Standard): string {
@@ -35,17 +38,28 @@ function haystack(s: Standard): string {
   ].filter(Boolean).join(' '))
 }
 
-// כל מילה בחיפוש צריכה להופיע איפשהו (בכל סדר). התאמה במספר התקן עצמו מוצגת ראשונה.
+// כל מילה בחיפוש צריכה להופיע איפשהו (בכל סדר). הסדר: קודם התאמה בקוד התקן עצמו, אחר כך בתיאור.
 export function searchStandards(standards: Standard[], query: string): Standard[] {
   const q = normalizeSearch(query)
   if (!q) return standards
   const words = q.split(' ')
+  const isNumber = /^\d+$/.test(q)
+  // ביטוי שלם בקוד; מספר בקצוות לא נחשב כחלק ממספר ארוך יותר ("תי 1920" לא תופס את 19200)
+  const phrase = new RegExp(`${/^\d/.test(q) ? '(^|[^\\d.])' : ''}${escapeRegex(q)}${/\d$/.test(q) ? '(?!\\d)' : ''}`)
   return standards
     .map((s, index) => {
       const text = haystack(s)
       if (!words.every((w) => wordMatches(text, w))) return null
       const code = normalizeSearch(s.code)
-      const rank = code.includes(q) ? 0 : words.every((w) => wordMatches(code, w)) ? 1 : 2
+      let rank: number
+      if (isNumber) {
+        // חיפוש לפי מספר ("1920"): התקן שזה המספר שלו (המספר הראשון בקוד) קודם, אחריו מספרים שמתחילים כך
+        // (19200), אחריו קודים שהמספר מופיע בהם במקום אחר (סעיף/שנה), ובסוף התאמה רק בתיאור
+        const codeNumber = code.match(/\d+/)?.[0]
+        rank = codeNumber === q ? 0 : codeNumber?.startsWith(q) ? 1 : wordMatches(code, q) ? 2 : 3
+      } else {
+        rank = phrase.test(code) ? 0 : words.every((w) => wordMatches(code, w)) ? 1 : 2
+      }
       return { s, rank, index }
     })
     .filter((x): x is { s: Standard; rank: number; index: number } => !!x)
