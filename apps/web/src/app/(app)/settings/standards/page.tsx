@@ -6,10 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { Input, Textarea } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { Plus, BookMarked, Trash2, Pencil, Upload, X, ImageIcon, FileUp, FileText, ExternalLink } from 'lucide-react'
+import { Plus, BookMarked, Trash2, Pencil, Upload, X, ImageIcon, FileUp, FileText, ExternalLink, Search } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { CATEGORY_LABELS } from '@/lib/utils'
 import type { Standard, StandardReference } from '@sitepilot/types'
+import { searchStandards } from '@/lib/standards-search'
 
 const SOURCE_TYPES: { value: string; label: string; color: string }[] = [
   { value: 'REGULATION', label: 'תקנות התכנון והבניה', color: 'bg-red-100 text-red-700' },
@@ -41,6 +42,8 @@ export default function StandardsPage() {
   const [open, setOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Standard | null>(null)
   const [filterSource, setFilterSource] = useState('')
+  const [filterCategory, setFilterCategory] = useState('')
+  const [search, setSearch] = useState('')
   const [form, setForm] = useState(emptyForm)
   const [uploadingRef, setUploadingRef] = useState(false)
   const [pendingCaption, setPendingCaption] = useState('')
@@ -53,7 +56,30 @@ export default function StandardsPage() {
     queryKey: ['standards'],
     queryFn: () => api.get<{ data: Standard[] }>('/standards'),
   })
-  const standards = (data?.data ?? []).filter((s) => !filterSource || s.sourceType === filterSource)
+  const allStandards = data?.data ?? []
+  // '__general' = תקנים בלי קטגוריה ("כללי")
+  const standards = searchStandards(
+    allStandards.filter((s) =>
+      (!filterSource || s.sourceType === filterSource) &&
+      (!filterCategory || (filterCategory === '__general' ? !s.category : s.category === filterCategory)),
+    ),
+    search,
+  )
+  const filtering = !!(search.trim() || filterSource || filterCategory)
+  // רק קטגוריות שיש בהן תקנים בפועל
+  const categoryFilterOptions = [
+    { value: '', label: 'כל המקצועות' },
+    ...Object.entries(CATEGORY_LABELS)
+      .filter(([value]) => allStandards.some((st) => st.category === value))
+      .map(([value, label]) => ({ value, label })),
+    ...(allStandards.some((st) => !st.category) ? [{ value: '__general', label: 'כללי' }] : []),
+  ]
+
+  function clearFilters() {
+    setSearch('')
+    setFilterSource('')
+    setFilterCategory('')
+  }
 
   function openNew() {
     setForm(emptyForm)
@@ -176,6 +202,32 @@ export default function StandardsPage() {
   return (
     <AppLayout title="ספריית תקנים">
       <div className="space-y-4">
+        {/* חיפוש — כדי לא לגלול על כל הספרייה */}
+        {allStandards.length > 0 && (
+          <div className="relative">
+            <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              type="text"
+            inputMode="search"
+            enterKeyHint="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="חיפוש לפי מספר תקן, נושא או מקצוע — למשל 1205 או איטום"
+              aria-label="חיפוש תקנים"
+              className="w-full border border-gray-300 rounded-lg pr-9 pl-9 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                aria-label="נקה חיפוש"
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-wrap">
             <button
@@ -198,6 +250,16 @@ export default function StandardsPage() {
               </button>
             ))}
           </div>
+          {categoryFilterOptions.length > 2 && (
+            <div className="w-full sm:w-52">
+              <Select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                options={categoryFilterOptions}
+                aria-label="סינון לפי מקצוע"
+              />
+            </div>
+          )}
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
               <FileUp size={14} />
@@ -210,11 +272,25 @@ export default function StandardsPage() {
           </div>
         </div>
 
-        {standards.length === 0 ? (
+        {filtering && allStandards.length > 0 && (
+          <p className="text-xs text-gray-500">
+            נמצאו {standards.length} תקנים מתוך {allStandards.length}
+            {' · '}
+            <button onClick={clearFilters} className="text-primary hover:underline">נקה חיפוש וסינון</button>
+          </p>
+        )}
+
+        {allStandards.length === 0 ? (
           <div className="card text-center py-14">
             <BookMarked size={40} className="text-gray-200 mx-auto mb-3" />
             <p className="text-gray-500">אין תקנים עדיין</p>
             <p className="text-gray-400 text-sm mt-1">הוסף תקנים, תקנות והל"ת לשימוש בדוחות בדק בית</p>
+          </div>
+        ) : standards.length === 0 ? (
+          <div className="card text-center py-12">
+            <Search size={36} className="text-gray-200 mx-auto mb-3" />
+            <p className="text-gray-500">לא נמצאו תקנים{search.trim() ? ` עבור "${search.trim()}"` : ''}</p>
+            <button onClick={clearFilters} className="text-sm text-primary hover:underline mt-2">נקה חיפוש וסינון</button>
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -5,7 +5,7 @@ import { AppLayout } from '@/components/layout/app-layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useState, useEffect, useRef } from 'react'
-import { Building2, Upload, Check } from 'lucide-react'
+import { Building2, Upload, Check, Trash2 } from 'lucide-react'
 
 export default function OrganizationSettingsPage() {
   const qc = useQueryClient()
@@ -15,6 +15,8 @@ export default function OrganizationSettingsPage() {
   })
   const [saved, setSaved] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [logoError, setLogoError] = useState('')
 
   const { data: org } = useQuery({
     queryKey: ['organization'],
@@ -47,13 +49,30 @@ export default function OrganizationSettingsPage() {
 
   const uploadLogo = async (file: File) => {
     setUploading(true)
+    setLogoError('')
     try {
       const fd = new FormData()
       fd.append('logo', file)
       await api.upload('/organization/logo', fd)
       qc.invalidateQueries({ queryKey: ['organization'] })
+    } catch (err: any) {
+      setLogoError(err.message || 'העלאת הלוגו נכשלה')
     } finally {
       setUploading(false)
+    }
+  }
+
+  const removeLogo = async () => {
+    if (!window.confirm('להסיר את לוגו החברה? הדוחות יציגו את שם החברה במקום.')) return
+    setRemoving(true)
+    setLogoError('')
+    try {
+      await api.delete('/organization/logo')
+      qc.invalidateQueries({ queryKey: ['organization'] })
+    } catch (err: any) {
+      setLogoError(err.message || 'הסרת הלוגו נכשלה')
+    } finally {
+      setRemoving(false)
     }
   }
 
@@ -80,17 +99,27 @@ export default function OrganizationSettingsPage() {
               }
             </div>
             <div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileRef.current?.click()}
-                loading={uploading}
-              >
-                <Upload size={14} />
-                {logoUrl ? 'החלף לוגו' : 'העלה לוגו'}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileRef.current?.click()}
+                  loading={uploading}
+                >
+                  <Upload size={14} />
+                  {logoUrl ? 'החלף לוגו' : 'העלה לוגו'}
+                </Button>
+                {logoUrl && (
+                  <Button variant="ghost" size="sm" onClick={removeLogo} loading={removing}>
+                    <Trash2 size={14} className="text-danger" />
+                    הסר לוגו
+                  </Button>
+                )}
+              </div>
+              {logoError && <p className="text-xs text-danger mt-1.5">{logoError}</p>}
               <p className="text-xs text-gray-400 mt-1.5">PNG, JPG או SVG, עד 2MB</p>
-              <p className="text-xs text-gray-400">יופיע בכותרת כל הדוחות</p>
+              <p className="text-xs text-gray-400">יופיע בכותרת כל הדוחות של כל המשתמשים בארגון</p>
+              <p className="text-xs text-gray-400">ללוגו שונה בדוח מסוים בלבד: "ערוך כותרת, לוגו וחתימה" במסך דוח השטח</p>
               <input
                 ref={fileRef}
                 type="file"

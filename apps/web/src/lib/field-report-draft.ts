@@ -49,6 +49,10 @@ export interface DraftMetadata {
   electricityConnected?: boolean
   waterConnected?: boolean
   generalNotes?: string
+  projectName?: string
+  projectAddress?: string
+  contractorName?: string
+  attendees?: string
 }
 
 export interface FieldReportDraft {

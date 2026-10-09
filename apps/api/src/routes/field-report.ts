@@ -1,7 +1,8 @@
 import { FastifyInstance } from 'fastify'
 import { authenticate } from '../middleware/auth'
+import { requireMinRole } from '../middleware/rbac'
 import { generateFieldReportPdf, generateHomeInspectionPdf } from '../services/pdf.service'
-import { getOrgBranding } from '../services/branding'
+import { getOrgBranding, applyReportLogo } from '../services/branding'
 import { saveFile, deleteFile } from '../services/storage'
 import { z } from 'zod'
 
@@ -39,6 +40,19 @@ const metadataSchema = z.object({
   electricityConnected: z.boolean().optional(),
   waterConnected: z.boolean().optional(),
   generalNotes: z.string().optional(),
+  // דוח פיקוח/מסירה — פרטי כותרת הדוח, ניתנים לעריכה גם אחרי הפקה
+  projectName: z.string().optional(),
+  projectAddress: z.string().optional(),
+  contractorName: z.string().optional(),
+  attendees: z.string().optional(),
+  // מיתוג וחתימה לדוח זה — ריק = פרטי הארגון מההגדרות
+  logoMode: z.enum(['org', 'custom', 'none']).optional(),
+  logoUrl: z.string().optional(),
+  companyName: z.string().optional(),
+  footerText: z.string().optional(),
+  signerName: z.string().optional(),
+  signerTitle: z.string().optional(),
+  signerPhone: z.string().optional(),
 }).optional()
 
 const createSchema = z.object({
@@ -64,12 +78,31 @@ const draftUpsertSchema = z.object({
   metadata: metadataSchema,
 })
 
+const moveSchema = z.object({
+  targetProjectId: z.string().min(1),
+})
+
 type ReqItem = z.infer<typeof itemSchema>
 
 const DEFAULT_TITLE_BY_TYPE: Record<string, string> = {
   INSPECTION: 'פיקוח',
   HANDOVER: 'מסירה',
   HOME_INSPECTION: 'בדק בית',
+}
+
+// דוחות שנבנים מממצאי שטח (ולא מנתוני הפרויקט) — רק אותם אפשר להפיק מחדש בפרויקט אחר
+const MOVABLE_TYPES = ['INSPECTION', 'HANDOVER', 'HOME_INSPECTION']
+
+function defaultTitle(type: string, projectName: string) {
+  return type === 'HOME_INSPECTION'
+    ? `חוות דעת הנדסית - בדק בית — ${projectName}`
+    : `דוח ${DEFAULT_TITLE_BY_TYPE[type]} — ${projectName}`
+}
+
+function reportPhotoIds(items: ReqItem[]) {
+  return items
+    .flatMap((it) => [it.photoId, it.planPhotoId, ...(it.extraPhotos ?? []).map((ep) => ep.photoId)])
+    .filter((id): id is string => !!id)
 }
 
 // בונה את שורת המיקום+הערה שמופיעה מתחת לתמונה בדוח שטח רגיל (לא בדק בית — שם יש שורות מתויגות נפרדות)
@@ -137,6 +170,25 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     }
   }
 
+  // הפקת קובץ ה-PDF של דוח שטח — משותף ליצירה, לעריכה ולהעברה בין פרויקטים
+  async function renderReportPdf(type: string, opts: {
+    title: string
+    project: any
+    items: Awaited<ReturnType<typeof buildPdfItems>>['items']
+    metadata: any
+    generatedByName?: string
+    organizationId: string
+  }) {
+    const branding = await getOrgBranding(fastify.prisma, opts.organizationId)
+    const { title, project, items, metadata, generatedByName } = opts
+    return type === 'HOME_INSPECTION'
+      ? generateHomeInspectionPdf({ title, project, items, branding, generatedByName, metadata })
+      : generateFieldReportPdf({
+          title, project, items, generatedByName, header: metadata,
+          branding: await applyReportLogo(branding, metadata, opts.organizationId),
+        })
+  }
+
   fastify.post('/projects/:projectId/field-report', async (request, reply) => {
     const { projectId } = request.params as { projectId: string }
     const body = createSchema.parse(request.body)
@@ -151,15 +203,12 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     const { items } = await buildPdfItems(projectId, request.user.organizationId, reqItems)
     if (!items.length) return reply.status(400).send({ error: 'No valid photos found' })
 
-    const branding = await getOrgBranding(fastify.prisma, request.user.organizationId)
-    const title = body.title || (body.type === 'HOME_INSPECTION'
-      ? `חוות דעת הנדסית - בדק בית — ${project.name}`
-      : `דוח ${DEFAULT_TITLE_BY_TYPE[body.type]} — ${project.name}`)
+    const title = body.title || defaultTitle(body.type, project.name)
     const user = await fastify.prisma.user.findUnique({ where: { id: request.user.userId } })
 
-    const pdfBuffer = body.type === 'HOME_INSPECTION'
-      ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name, metadata: body.metadata })
-      : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name })
+    const pdfBuffer = await renderReportPdf(body.type, {
+      title, project, items, metadata: body.metadata, generatedByName: user?.name, organizationId: request.user.organizationId,
+    })
 
     const filename = `report-${Date.now()}.pdf`
     const pdfUrl = await saveFile(pdfBuffer, filename, 'application/pdf')
@@ -231,14 +280,13 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
     const { items } = await buildPdfItems(projectId, request.user.organizationId, body.items)
     if (!items.length) return reply.status(400).send({ error: 'No valid photos found' })
 
-    const branding = await getOrgBranding(fastify.prisma, request.user.organizationId)
     const title = body.title || report.title
     const user = await fastify.prisma.user.findUnique({ where: { id: request.user.userId } })
     const metadata = body.metadata ?? (report.metadata as any)
 
-    const pdfBuffer = report.type === 'HOME_INSPECTION'
-      ? await generateHomeInspectionPdf({ title, project, items, branding, generatedByName: user?.name, metadata })
-      : await generateFieldReportPdf({ title, project, items, branding, generatedByName: user?.name })
+    const pdfBuffer = await renderReportPdf(report.type, {
+      title, project, items, metadata, generatedByName: user?.name, organizationId: request.user.organizationId,
+    })
 
     const filename = `report-${Date.now()}.pdf`
     const pdfUrl = await saveFile(pdfBuffer, filename, 'application/pdf')
@@ -251,6 +299,71 @@ export default async function fieldReportRoutes(fastify: FastifyInstance) {
       data: { title, pdfUrl, sourceItems: body.items as any, metadata: metadata as any },
     })
 
+    return reply.send({ data: updated })
+  })
+
+  // העברת דוח שטח לפרויקט אחר (למשל כשנוצר בטעות בפרויקט הלא נכון): הדוח והתמונות שלו עוברים,
+  // וה-PDF מופק מחדש עם פרטי הפרויקט החדש. קודם מפיקים — ורק אם זה הצליח מעבירים, בטרנזקציה אחת.
+  fastify.post('/projects/:projectId/field-report/:reportId/move', { preHandler: requireMinRole('SUPERVISOR') }, async (request, reply) => {
+    const { projectId, reportId } = request.params as { projectId: string; reportId: string }
+    const { targetProjectId } = moveSchema.parse(request.body)
+    const organizationId = request.user.organizationId
+    if (targetProjectId === projectId) return reply.status(400).send({ error: 'הדוח כבר נמצא בפרויקט הזה' })
+
+    const report = await fastify.prisma.report.findFirst({
+      where: { id: reportId, projectId, project: { organizationId } },
+      include: { project: true },
+    })
+    if (!report) return reply.status(404).send({ error: 'Report not found' })
+    if (!MOVABLE_TYPES.includes(report.type) || !report.sourceItems) {
+      return reply.status(400).send({ error: 'אפשר להעביר רק דוחות שטח (פיקוח, מסירה, בדק בית) שניתנים לעריכה' })
+    }
+
+    const target = await fastify.prisma.project.findFirst({
+      where: { id: targetProjectId, organizationId },
+      include: { organization: true },
+    })
+    if (!target) return reply.status(404).send({ error: 'Project not found' })
+
+    // בשלב הזה התמונות עדיין בפרויקט המקורי
+    const reqItems = report.sourceItems as unknown as ReqItem[]
+    const { items } = await buildPdfItems(projectId, organizationId, reqItems)
+    if (!items.length) return reply.status(400).send({ error: 'No valid photos found' })
+
+    // כותרת ברירת מחדל ("דוח פיקוח — <פרויקט>") עוברת לשם הפרויקט החדש; כותרת שנכתבה ידנית נשארת
+    const title = report.title === defaultTitle(report.type, report.project.name)
+      ? defaultTitle(report.type, target.name)
+      : report.title
+    // שם/כתובת פרויקט שהוקלדו ידנית בכותרת הדוח שייכים לפרויקט הקודם
+    let metadata = report.metadata as Record<string, unknown> | null
+    if (metadata) {
+      const { projectName: _name, projectAddress: _address, ...rest } = metadata
+      metadata = rest
+    }
+    // העברה לא משנה את מחבר הדוח
+    const author = await fastify.prisma.user.findUnique({ where: { id: report.generatedBy } })
+
+    const pdfBuffer = await renderReportPdf(report.type, {
+      title, project: target, items, metadata, generatedByName: author?.name, organizationId,
+    })
+    const pdfUrl = await saveFile(pdfBuffer, `report-${Date.now()}.pdf`, 'application/pdf')
+
+    const [, updated] = await fastify.prisma.$transaction([
+      // רק תמונות הדוח שאינן משויכות לליקוי/יומן/משימה של הפרויקט המקורי
+      fastify.prisma.photo.updateMany({
+        where: {
+          id: { in: reportPhotoIds(reqItems) }, projectId,
+          journalId: null, taskId: null, defectBeforeId: null, defectAfterId: null,
+        },
+        data: { projectId: targetProjectId },
+      }),
+      fastify.prisma.report.update({
+        where: { id: reportId },
+        data: { projectId: targetProjectId, title, pdfUrl, ...(metadata ? { metadata: metadata as any } : {}) },
+      }),
+    ])
+
+    if (report.pdfUrl) await deleteFile(report.pdfUrl).catch(() => {})
     return reply.send({ data: updated })
   })
 

@@ -1,4 +1,4 @@
-import puppeteer, { Browser } from 'puppeteer'
+import puppeteer, { Browser, Page } from 'puppeteer'
 import path from 'path'
 import sharp from 'sharp'
 import { readFile } from './storage'
@@ -100,6 +100,15 @@ async function getBrowser(): Promise<Browser> {
   return browserPromise
 }
 
+// עם --single-process, Chrome נסגר יחד עם הדף האחרון שלו — אבל לרגע עדיין נראה מחובר, והפקה שהגיעה
+// מיד אחרי הקודמת תפסה דפדפן גוסס ונכשלה ב-"Connection closed". לכן סוגרים אותו במפורש אחרי כל הפקה,
+// וההפקה הבאה משגרת דפדפן חדש (ממילא זה מה שקרה, רק בלי המרוץ). ההפקות רצות אחת-אחת (enqueuePdf).
+async function releasePage(browser: Browser, page: Page) {
+  await page.close().catch(() => {})
+  browserPromise = null
+  await browser.close().catch(() => {})
+}
+
 // מריצים הפקת PDF אחת בכל פעם — שני דוחות שנוצרים בו-זמנית מכפילים את צריכת הזיכרון
 // (כל אחד עם תמונות משלו ב-Chrome), וזה בדיוק מה שהציף את השרת ה-free tier (512MB) בעבר.
 let pdfQueue: Promise<unknown> = Promise.resolve()
@@ -151,6 +160,15 @@ function footerHtml(branding: Branding | undefined, orgName: string, extra?: str
   return `
     <div style="width:100%; font-size:8px; color:#999; text-align:center; direction:rtl; font-family:Arial,sans-serif; padding:0 40px;">
       ${parts.map((p) => esc(p)).join(' &nbsp;|&nbsp; ')}
+    </div>
+  `
+}
+
+// כותרת תחתונה בטקסט חופשי שהוגדר לדוח מסוים — באותו עיצוב כמו footerHtml
+function footerLineHtml(text: string): string {
+  return `
+    <div style="width:100%; font-size:8px; color:#999; text-align:center; direction:rtl; font-family:Arial,sans-serif; padding:0 40px;">
+      ${esc(text)}
     </div>
   `
 }
@@ -293,16 +311,31 @@ async function generatePdfImpl(options: PdfOptions): Promise<Buffer> {
     })
     return Buffer.from(pdfBuffer)
   } finally {
-    await page.close()
+    await releasePage(browser, page)
   }
+}
+
+interface FieldReportHeader {
+  visitDate?: string
+  projectName?: string
+  projectAddress?: string
+  contractorName?: string
+  attendees?: string
+  generalNotes?: string
+  companyName?: string
+  footerText?: string
+  signerName?: string
+  signerTitle?: string
+  signerPhone?: string
 }
 
 interface FieldReportOptions {
   title: string
   project: any
-  items: { photoUrl: string; note: string; planUrl?: string }[]
+  items: { photoUrl: string; note: string; planUrl?: string; category?: string; extraPhotos?: { url: string; caption?: string }[] }[]
   branding?: Branding
   generatedByName?: string
+  header?: FieldReportHeader
 }
 
 export function generateFieldReportPdf(options: FieldReportOptions): Promise<Buffer> {
@@ -310,21 +343,51 @@ export function generateFieldReportPdf(options: FieldReportOptions): Promise<Buf
 }
 
 async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<Buffer> {
-  const { title, project, items, branding, generatedByName } = options
+  const { title, project, branding, generatedByName, header } = options
   const color = branding?.primaryColor || '#1B4F72'
-  const now = new Date().toLocaleDateString('he-IL')
+  const now = header?.visitDate ? new Date(header.visitDate).toLocaleDateString('he-IL') : new Date().toLocaleDateString('he-IL')
   const orgName = project.organization?.name || 'SH - Project Manager'
+  // שם עסק אחר לדוח הזה — במקרה כזה לא מציגים את הסלוגן ופרטי הקשר של הארגון, שלא שייכים לו
+  const customBrand = header?.companyName?.trim()
+  const brandName = customBrand || orgName
+  const letterheadBranding = branding && customBrand ? { ...branding, tagline: undefined } : branding
+  const signerName = header?.signerName?.trim() || generatedByName || brandName
+  const signerPhone = header?.signerPhone?.trim() || (!customBrand && generatedByName ? branding?.phone : undefined)
+  const footer = header?.footerText?.trim()
+    ? footerLineHtml(header.footerText.trim())
+    : footerHtml(customBrand ? undefined : branding, brandName)
+
+  // מסדרים לפי מקצוע (סדר קבוע), ובתוך כל מקצוע לפי סדר התיעוד בשטח
+  const grouped = options.items.some((it) => it.category)
+  const items = grouped
+    ? options.items.map((it, idx) => ({ it, idx })).sort((a, b) => categoryRank(a.it.category) - categoryRank(b.it.category) || a.idx - b.idx).map((x) => x.it)
+    : options.items
 
   // ברצף ולא במקביל — עם 20+ ממצאים, עיבוד כל התמונות בו-זמנית מציף את זיכרון השרת ומקריס אותו
   const itemsHtmlParts: string[] = []
+  let currentCategory: string | null = null
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
+    if (grouped) {
+      const cat = item.category || ''
+      if (cat !== currentCategory) {
+        currentCategory = cat
+        const count = items.filter((x) => (x.category || '') === cat).length
+        itemsHtmlParts.push(`<h2 class="trade-heading">${esc(cat ? categoryLabel(cat) : 'כללי')} <span class="trade-count">(${count})</span></h2>`)
+      }
+    }
     const src = await photoToBase64(item.photoUrl)
     const planSrc = item.planUrl ? await photoToBase64(item.planUrl) : null
+    const extraParts: string[] = []
+    for (const ep of item.extraPhotos ?? []) {
+      const epSrc = await photoToBase64(ep.url)
+      if (epSrc) extraParts.push(`<figure class="field-extra"><img src="${epSrc}" />${ep.caption ? `<figcaption>${esc(ep.caption)}</figcaption>` : ''}</figure>`)
+    }
     itemsHtmlParts.push(`
       <div class="field-item">
         <div class="field-item-num">${i + 1}</div>
         ${src ? `<img class="field-item-photo" src="${src}" />` : ''}
+        ${extraParts.length ? `<div class="field-extras">${extraParts.join('')}</div>` : ''}
         <div class="field-item-note">${esc(item.note)}</div>
         ${planSrc ? `
           <div class="field-item-plan-label">מיקום על תוכנית:</div>
@@ -334,6 +397,9 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
     `)
   }
   const itemsHtml = itemsHtmlParts.join('')
+
+  const headerRow = (label: string, value?: string) =>
+    value?.trim() ? `<div class="project-address"><b>${esc(label)}:</b> ${esc(value)}</div>` : ''
 
   const html = `
     <!DOCTYPE html>
@@ -355,26 +421,37 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
         .field-item-plan-label { font-size: 11px; font-weight: bold; color: ${color}; margin: 10px 0 4px; }
         .field-item-plan { width: 100%; max-height: 300px; object-fit: contain; border-radius: 8px; display: block; background: #f8f9fa; border: 1px solid #eee; }
         .summary { font-size: 11px; color: #666; margin-bottom: 14px; }
+        .field-extras { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .field-extra { margin: 0; width: calc(50% - 4px); page-break-inside: avoid; }
+        .field-extra img { width: 100%; height: 190px; object-fit: contain; border-radius: 8px; background: #f8f9fa; display: block; }
+        .field-extra figcaption { font-size: 10px; color: #555; margin-top: 3px; text-align: center; }
+        .trade-heading { font-size: 16px; color: ${color}; border-bottom: 2px solid ${color}; padding-bottom: 4px; margin: 22px 0 12px; page-break-after: avoid; }
+        .trade-count { font-size: 12px; color: #888; font-weight: normal; }
+        .general-notes { font-size: 12px; line-height: 1.5; white-space: pre-wrap; background: #f8f9fa; border-radius: 8px; padding: 10px 12px; margin: 8px 0 14px; }
         .signoff { margin-top: 30px; padding-top: 18px; border-top: 1px solid #eee; font-size: 13px; line-height: 1.6; page-break-inside: avoid; }
         .signoff .name { font-weight: bold; color: ${color}; }
       </style>
     </head>
     <body>
-      ${letterheadHtml(branding, orgName)}
+      ${letterheadHtml(letterheadBranding, brandName)}
       <div class="doc-date">${esc(now)}</div>
 
       <h1>${esc(title)}</h1>
-      <div class="project-name">פרויקט: ${esc(project.name)}</div>
-      <div class="project-address">כתובת: ${esc(project.address)}</div>
+      <div class="project-name">פרויקט: ${esc(header?.projectName?.trim() || project.name)}</div>
+      <div class="project-address">כתובת: ${esc(header?.projectAddress?.trim() || project.address)}</div>
+      ${headerRow('קבלן מבצע', header?.contractorName)}
+      ${headerRow('נוכחים', header?.attendees)}
       <div class="summary">סך הכל ${items.length} ממצאים תועדו</div>
+      ${header?.generalNotes?.trim() ? `<div class="general-notes">${esc(header.generalNotes)}</div>` : ''}
       <hr class="divider" />
 
       ${itemsHtml}
 
       <div class="signoff">
         <div>בברכה,</div>
-        <div class="name">${esc(generatedByName || orgName)}</div>
-        ${generatedByName && branding?.phone ? `<div>${esc(branding.phone)}</div>` : ''}
+        <div class="name">${esc(signerName)}</div>
+        ${header?.signerTitle?.trim() ? `<div>${esc(header.signerTitle.trim())}</div>` : ''}
+        ${signerPhone ? `<div>${esc(signerPhone)}</div>` : ''}
       </div>
     </body>
     </html>
@@ -390,11 +467,11 @@ async function generateFieldReportPdfImpl(options: FieldReportOptions): Promise<
       margin: { top: '0', bottom: '46px', left: '0', right: '0' },
       displayHeaderFooter: true,
       headerTemplate: '<span></span>',
-      footerTemplate: footerHtml(branding, orgName),
+      footerTemplate: footer,
     })
     return Buffer.from(pdfBuffer)
   } finally {
-    await page.close()
+    await releasePage(browser, page)
   }
 }
 
@@ -743,7 +820,7 @@ async function generateHomeInspectionPdfImpl(options: HomeInspectionOptions): Pr
     })
     return Buffer.from(pdfBuffer)
   } finally {
-    await page.close()
+    await releasePage(browser, page)
   }
 }
 
@@ -830,12 +907,20 @@ async function generateReceiptPdfImpl(options: ReceiptOptions): Promise<Buffer> 
     })
     return Buffer.from(pdfBuffer)
   } finally {
-    await page.close()
+    await releasePage(browser, page)
   }
 }
 
 function severityLabel(s: string) { return { LOW: 'נמוכה', MEDIUM: 'בינונית', HIGH: 'גבוהה', CRITICAL: 'קריטי' }[s] || s }
-function categoryLabel(c: string) { return { STRUCTURE: 'שלד', CONCRETE: 'בטון', IRON: 'ברזל', WATERPROOFING: 'איטום', PLUMBING: 'אינסטלציה', ELECTRICAL: 'חשמל', HVAC: 'מיזוג', DRYWALL: 'גבס', FLOORING: 'ריצוף', CLADDING: 'חיפוי', PAINT: 'צבע', ALUMINUM: 'אלומיניום', CARPENTRY: 'נגרות', METALWORK: 'מסגרות', SAFETY: 'בטיחות', LANDSCAPING: 'פיתוח', DOOR_ENTRANCE: 'דלת כניסה', INTERIOR_DOORS_POLYMER: 'דלתות פנים - פולימריות', CLEANING: 'ניקיון', SAFE_ROOM_METALWORK: 'מסגרות-ממ"ד', ACCESSIBILITY_SIGNAGE: 'נגישות/שילוט/סימון', PLASTER_PAINT_WORK: 'עבודות טיח וצבע', ELECTRICAL_SAFETY_FIXTURES: 'אביזרי חשמל ותקשורת/בטיחות', OTHER: 'אחר' }[c] || c }
+// סדר המפתחות = סדר המקצועות בדוח (בערך לפי שלבי הביצוע)
+const CATEGORY_LABELS: Record<string, string> = { STRUCTURE: 'שלד', CONCRETE: 'בטון', IRON: 'ברזל', WATERPROOFING: 'איטום', PLUMBING: 'אינסטלציה', ELECTRICAL: 'חשמל', HVAC: 'מיזוג', DRYWALL: 'גבס', FLOORING: 'ריצוף', CLADDING: 'חיפוי', PAINT: 'צבע', ALUMINUM: 'אלומיניום', CARPENTRY: 'נגרות', METALWORK: 'מסגרות', SAFETY: 'בטיחות', LANDSCAPING: 'פיתוח', DOOR_ENTRANCE: 'דלת כניסה', INTERIOR_DOORS_POLYMER: 'דלתות פנים - פולימריות', CLEANING: 'ניקיון', SAFE_ROOM_METALWORK: 'מסגרות-ממ"ד', ACCESSIBILITY_SIGNAGE: 'נגישות/שילוט/סימון', PLASTER_PAINT_WORK: 'עבודות טיח וצבע', ELECTRICAL_SAFETY_FIXTURES: 'אביזרי חשמל ותקשורת/בטיחות', OTHER: 'אחר' }
+const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS)
+function categoryLabel(c: string) { return CATEGORY_LABELS[c] || c }
+// ממצאים בלי מקצוע ("כללי") — בסוף הדוח
+function categoryRank(c: string | undefined) {
+  const i = c ? CATEGORY_ORDER.indexOf(c) : -1
+  return i === -1 ? CATEGORY_ORDER.length : i
+}
 function defectStatusLabel(s: string) { return { OPEN: 'פתוח', IN_PROGRESS: 'בטיפול', FIXED: 'תוקן', VERIFIED: 'אומת', CLOSED: 'סגור' }[s] || s }
 function priorityLabel(p: string) { return { LOW: 'נמוכה', MEDIUM: 'רגילה', HIGH: 'גבוהה', CRITICAL: 'קריטי' }[p] || p }
 function taskStatusLabel(s: string) { return { OPEN: 'פתוח', IN_PROGRESS: 'בביצוע', PENDING_APPROVAL: 'ממתין לאישור', DONE: 'הושלם', CANCELLED: 'בוטל' }[s] || s }

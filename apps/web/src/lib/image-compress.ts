@@ -7,7 +7,8 @@ const MIN_BYTES_TO_COMPRESS = 600 * 1024
 // ומוריד קובץ של כמה MB לכמה מאות KB. אם משהו נכשל — מחזירים את הקובץ המקורי.
 export async function compressImage(file: File): Promise<File> {
   if (typeof window === 'undefined') return file
-  if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml') return file
+  // PNG נשאר כמו שהוא — לוגואים וצילומי מסך עם רקע שקוף היו מקבלים רקע שחור בהמרה ל-JPEG
+  if (!file.type.startsWith('image/') || ['image/gif', 'image/svg+xml', 'image/png'].includes(file.type)) return file
   if (file.size < MIN_BYTES_TO_COMPRESS) return file
 
   try {
