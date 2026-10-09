@@ -10,6 +10,7 @@ import { Plus, ClipboardList, Trash2, Pencil, Search, FileUp } from 'lucide-reac
 import { useState } from 'react'
 import { CATEGORY_LABELS } from '@/lib/utils'
 import type { FindingTemplate, Standard } from '@sitepilot/types'
+import { StandardChipPicker } from '@/components/standards/standard-chip-picker'
 
 const CATEGORY_OPTIONS = [
   { value: '', label: 'כללי (לא קטגוריה ספציפית)' },
@@ -226,22 +227,7 @@ export default function FindingTemplatesPage() {
             {relevantStandards.length === 0 ? (
               <p className="text-xs text-gray-400 mt-1.5">אין תקנים מתאימים — ניתן להוסיף ב"ספריית תקנים"</p>
             ) : (
-              <div className="flex flex-wrap gap-1.5 mt-1.5">
-                {relevantStandards.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => toggleStandard(s.id)}
-                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                      form.standardIds.includes(s.id)
-                        ? 'bg-primary text-white border-primary'
-                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-primary/40'
-                    }`}
-                  >
-                    {s.code}
-                  </button>
-                ))}
-              </div>
+              <StandardChipPicker standards={relevantStandards} selectedIds={form.standardIds} onToggle={toggleStandard} />
             )}
           </div>
 

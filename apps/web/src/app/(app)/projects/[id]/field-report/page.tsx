@@ -19,6 +19,7 @@ import { PhotoAnnotator } from '@/components/photo/photo-annotator'
 import { generateAnnotatedPlanImage } from '@/lib/plan-annotation'
 import { saveDraft, loadDraft, deleteDraft, type FieldReportDraft } from '@/lib/field-report-draft'
 import { useAuthStore } from '@/store/auth'
+import { StandardChipPicker } from '@/components/standards/standard-chip-picker'
 import type { Standard, FindingTemplate } from '@sitepilot/types'
 
 // מעלים תמונות אחת-אחת ולא במקביל — העלאה בו-זמנית של 10+ תמונות מהפלאפון מציפה את השרת
@@ -1624,30 +1625,21 @@ export default function FieldReportPage() {
                 {isHomeInspection && (
                   <div>
                     <label className="text-sm font-medium text-neutral-dark">תקנים משויכים</label>
-                    <div className="flex flex-wrap gap-1.5 mt-1.5">
-                      {relevantStandards.map((s) => (
+                    <StandardChipPicker
+                      standards={relevantStandards}
+                      selectedIds={pendingStandardIds}
+                      onToggle={toggleStandardSelection}
+                      extra={
                         <button
-                          key={s.id}
                           type="button"
-                          onClick={() => toggleStandardSelection(s.id)}
-                          className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                            pendingStandardIds.includes(s.id)
-                              ? 'bg-primary text-white border-primary'
-                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-primary/40'
-                          }`}
+                          onClick={() => setNewStandardOpen((v) => !v)}
+                          className="text-xs px-2.5 py-1 rounded-full border border-dashed border-primary/40 text-primary flex items-center gap-1"
                         >
-                          {s.code}
+                          <Plus size={11} />
+                          הוסף תקן חדש
                         </button>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => setNewStandardOpen((v) => !v)}
-                        className="text-xs px-2.5 py-1 rounded-full border border-dashed border-primary/40 text-primary flex items-center gap-1"
-                      >
-                        <Plus size={11} />
-                        הוסף תקן חדש
-                      </button>
-                    </div>
+                      }
+                    />
                     {newStandardOpen && (
                       <div className="mt-2 p-3 bg-gray-50 rounded-lg space-y-2">
                         <div className="flex gap-1.5 flex-wrap">
