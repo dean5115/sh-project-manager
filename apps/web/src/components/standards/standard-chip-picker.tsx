@@ -8,7 +8,10 @@ import { searchStandards } from '@/lib/standards-search'
 const SEARCH_THRESHOLD = 8
 
 interface Props {
+  // התקנים שמוצגים כברירת מחדל (למשל רק של הקטגוריה של הממצא)
   standards: Standard[]
+  // בחיפוש מחפשים בכל הספרייה — מי שמקליד מספר תקן מחפש אותו גם אם הוא בקטגוריה אחרת
+  searchPool?: Standard[]
   selectedIds: string[]
   onToggle: (id: string) => void
   // צ'יפ נוסף בסוף הרשימה (למשל "הוסף תקן חדש")
@@ -16,11 +19,12 @@ interface Props {
 }
 
 // בחירת תקנים כצ'יפים, עם חיפוש. תקנים שכבר נבחרו תמיד מוצגים, גם אם לא תואמים לחיפוש.
-export function StandardChipPicker({ standards, selectedIds, onToggle, extra }: Props) {
+export function StandardChipPicker({ standards, searchPool, selectedIds, onToggle, extra }: Props) {
   const [query, setQuery] = useState('')
-  const showSearch = standards.length > SEARCH_THRESHOLD
-  const matches = searchStandards(standards, query)
-  const selectedHidden = query ? standards.filter((s) => selectedIds.includes(s.id) && !matches.includes(s)) : []
+  const pool = searchPool ?? standards
+  const showSearch = pool.length > SEARCH_THRESHOLD
+  const matches = query.trim() ? searchStandards(pool, query) : standards
+  const selectedHidden = pool.filter((s) => selectedIds.includes(s.id) && !matches.includes(s))
   const visible = [...selectedHidden, ...matches]
 
   return (
@@ -66,8 +70,11 @@ export function StandardChipPicker({ standards, selectedIds, onToggle, extra }: 
         ))}
         {extra}
       </div>
-      {query && matches.length === 0 && (
-        <p className="text-xs text-gray-400">לא נמצאו תקנים עבור "{query}"</p>
+      {query.trim() && matches.length === 0 && (
+        <p className="text-xs text-gray-400">לא נמצאו תקנים עבור "{query}" — אפשר להוסיף אותו ב"ספריית תקנים"</p>
+      )}
+      {!query.trim() && standards.length === 0 && pool.length > 0 && (
+        <p className="text-xs text-gray-400">אין תקנים בקטגוריה הזו — חפש למעלה בכל התקנים</p>
       )}
     </div>
   )

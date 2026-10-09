@@ -7,7 +7,7 @@ import { Modal } from '@/components/ui/modal'
 import { Input, Textarea } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Plus, BookMarked, Trash2, Pencil, Upload, X, ImageIcon, FileUp, FileText, ExternalLink, Search } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CATEGORY_LABELS } from '@/lib/utils'
 import type { Standard, StandardReference } from '@sitepilot/types'
 import { searchStandards } from '@/lib/standards-search'
@@ -44,6 +44,12 @@ export default function StandardsPage() {
   const [filterSource, setFilterSource] = useState('')
   const [filterCategory, setFilterCategory] = useState('')
   const [search, setSearch] = useState('')
+
+  // ?q= מהחיפוש העליון — פותחים את הספרייה כשהחיפוש כבר ממולא
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q')
+    if (q) setSearch(q)
+  }, [])
   const [form, setForm] = useState(emptyForm)
   const [uploadingRef, setUploadingRef] = useState(false)
   const [pendingCaption, setPendingCaption] = useState('')

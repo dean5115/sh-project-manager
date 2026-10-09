@@ -1627,6 +1627,7 @@ export default function FieldReportPage() {
                     <label className="text-sm font-medium text-neutral-dark">תקנים משויכים</label>
                     <StandardChipPicker
                       standards={relevantStandards}
+                      searchPool={standards}
                       selectedIds={pendingStandardIds}
                       onToggle={toggleStandardSelection}
                       extra={
